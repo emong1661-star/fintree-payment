@@ -12,6 +12,8 @@
     const ALLOWED_HOSTNAMES = [
         'qorekdnsqor1.imweb.me',
         'bagdown.shop',
+        'kmcompany01.shop',
+        'whggkqtycld1.imweb.me',
         'localhost',
         '127.0.0.1',
         'bagdown-payment.netlify.app'
@@ -780,3 +782,4 @@
     }
 
 })();
+
