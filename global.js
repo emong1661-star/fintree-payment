@@ -1,11 +1,9 @@
 /**
  * Fintree Payment Universal Script (Netlify Hosted)
- * - Imweb shop_payment / shop_payment_complete 흐름
- * - 카드결제 의도 저장 -> 주문 생성 후 complete 페이지에서 MARU.pay 실행
- * - 핵심:
- *   1) amount 강력 추출 (0 방지)
- *   2) ITEM_NAME UTF-8 byte 제한(80byte) 강제 (83byte 초과 오류 해결)
- *   3) 카드결제 선택 시 무통장 영역 완전 숨김
+ * FIX:
+ * - amount가 "할인가+정상가" 영역에서 합쳐지는 문제 해결
+ * - "총 주문금액" 라벨 옆 숫자만 정확히 amount로 사용
+ * - 카드결제 선택 시 무통장 영역 숨김
  */
 
 (function () {
@@ -17,30 +15,19 @@
     "bagdown.shop",
     "kmcompany01.shop",
     "whggkqtycld1.imweb.me",
+    "vpvpexmxkqtb.imweb.me",
+    "ptsrep.shop",
     "localhost",
     "127.0.0.1",
     "bagdown-payment.netlify.app",
   ];
 
-  if (
-    !ALLOWED_HOSTNAMES.includes(location.hostname) &&
-    !location.hostname.endsWith(".vercel.app")
-  ) {
-    console.warn(
-      LOG_PREFIX +
-        "Script execution blocked: Domain not allowed (" +
-        location.hostname +
-        ")"
-    );
+  if (!ALLOWED_HOSTNAMES.includes(location.hostname) && !location.hostname.endsWith(".vercel.app")) {
+    console.warn(LOG_PREFIX + "Script execution blocked: Domain not allowed (" + location.hostname + ")");
     return;
   }
 
-  console.log(
-    LOG_PREFIX + "Initialized. Protocol:",
-    location.protocol,
-    "Path:",
-    location.pathname
-  );
+  console.log(LOG_PREFIX + "Initialized. Protocol:", location.protocol, "Path:", location.pathname);
 
   // --- Hosted domain detect ---
   let hostedDomain = "https://bagdown-payment.netlify.app";
@@ -65,7 +52,7 @@
       CANCEL: "/payment-cancel",
       REFUND: "/payment-refund",
     },
-    ITEM_NAME_MAX_BYTES: 80, // ★ 핵심: 결제사 ITEM_NAME byte 제한 대응
+    ITEM_NAME_MAX_BYTES: 80,
   };
 
   // ---------------- Helper ----------------
@@ -80,43 +67,47 @@
   }
 
   function getRedirectUrl(targetPath) {
-    const isLocal =
-      location.pathname.endsWith(".html") || location.protocol === "file:";
+    const isLocal = location.pathname.endsWith(".html") || location.protocol === "file:";
     return targetPath + (isLocal ? ".html" : "");
   }
 
   function getURLParam(name) {
-    const results = new RegExp("[\\?&]" + name + "=([^&#]*)").exec(
-      location.search
-    );
-    return results === null
-      ? ""
-      : decodeURIComponent(results[1].replace(/\+/g, " "));
+    const results = new RegExp("[\\?&]" + name + "=([^&#]*)").exec(location.search);
+    return results === null ? "" : decodeURIComponent(results[1].replace(/\+/g, " "));
   }
 
+  /**
+   * ✅ 변경 핵심:
+   * 텍스트에 숫자가 여러 개(할인가/정상가 같이 표시) 있으면
+   * "이어붙이지 말고" 하나만 고르기.
+   * 기본은 "마지막 숫자"를 선택(총 주문금액 줄은 보통 마지막/굵은 값이 됨).
+   */
   function parseAmountNumber(input) {
-    if (!input) return 0;
+    if (input == null) return 0;
     const s = String(input);
-    const cleaned = s.replace(/[^\d.,\s]/g, "");
-    const n = parseInt(cleaned.replace(/[,\s.]/g, ""), 10);
+
+    // 1) 숫자 후보들 추출 (예: "191,800 274,000" -> ["191,800","274,000"])
+    const matches = s.match(/\d[\d,.\s]*\d/g);
+    if (!matches || matches.length === 0) return 0;
+
+    // 2) 여러 개면 마지막 숫자를 선택(이어붙임 방지)
+    const pick = matches[matches.length - 1];
+
+    const n = parseInt(String(pick).replace(/[,\s.]/g, ""), 10);
     return Number.isFinite(n) ? n : 0;
   }
 
-  // UTF-8 바이트 길이 계산
   function utf8ByteLength(str) {
     try {
       return new TextEncoder().encode(String(str || "")).length;
     } catch (e) {
-      // 구형 fallback
       return unescape(encodeURIComponent(String(str || ""))).length;
     }
   }
 
-  // UTF-8 바이트 기준으로 잘라내기
   function truncateUtf8ByBytes(str, maxBytes) {
     str = String(str || "");
     if (utf8ByteLength(str) <= maxBytes) return str;
-
     let out = "";
     for (const ch of str) {
       const next = out + ch;
@@ -126,78 +117,65 @@
     return out;
   }
 
-  // 상품명 정리 + byte 제한 적용
   function sanitizeItemName(name) {
     let s = String(name || "상품").trim();
-
-    // 결제 모듈에서 싫어하는 특수문자 줄이기(슬래시/이모지/괄호 과다 등)
     s = s
       .replace(/[\r\n\t]+/g, " ")
       .replace(/\s+/g, " ")
-      .replace(/[💳🏦✅❌🔥⭐️✨]/g, "") // 자주 문제되는 이모지 제거
-      .replace(/[\/\\|]/g, " ") // / \ | 제거
+      .replace(/[💳🏦✅❌🔥⭐️✨]/g, "")
+      .replace(/[\/\\|]/g, " ")
       .trim();
 
-    // 너무 길면 바이트 기준으로 컷
     const beforeBytes = utf8ByteLength(s);
     const cut = truncateUtf8ByBytes(s, CONFIG.ITEM_NAME_MAX_BYTES);
 
     if (beforeBytes !== utf8ByteLength(cut)) {
-      console.log(
-        LOG_PREFIX + `ITEM_NAME trimmed: ${beforeBytes}B -> ${utf8ByteLength(cut)}B`,
-        cut
-      );
+      console.log(LOG_PREFIX + `ITEM_NAME trimmed: ${beforeBytes}B -> ${utf8ByteLength(cut)}B`, cut);
     }
     return cut || "상품";
   }
 
-  // "총 주문금액" 라벨 기반 추출
-  function extractAmountByLabel() {
-    const labelCandidates = [
-      "총 주문금액",
-      "총주문금액",
-      "결제금액",
-      "총 결제금액",
-      "총결제금액",
-      "합계",
-    ];
+  /**
+   * ✅ 새로 추가:
+   * "총 주문금액" 라벨이 있는 줄에서만 금액을 정확히 집어온다.
+   */
+  function extractTotalOrderAmount() {
+    const labels = ["총 주문금액", "총주문금액", "총 결제금액", "총결제금액", "결제금액"];
+    const nodes = Array.from(document.querySelectorAll("div, li, p, span, strong, b"));
 
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
-    let node;
-    while ((node = walker.nextNode())) {
-      const t = (node.innerText || "").trim();
-      if (!t) continue;
+    for (const el of nodes) {
+      const text = (el.innerText || "").trim();
+      if (!text) continue;
 
-      const matched = labelCandidates.find((k) =>
-        t.replace(/\s/g, "").includes(k.replace(/\s/g, ""))
-      );
-      if (!matched) continue;
+      const hit = labels.find((k) => text.replace(/\s/g, "").includes(k.replace(/\s/g, "")));
+      if (!hit) continue;
 
-      const container =
-        node.closest("div, li, section, article") || node.parentElement;
-      if (!container) continue;
+      // 같은 줄/같은 부모에서 금액 찾기
+      const row = el.closest("div, li, p") || el.parentElement;
+      if (!row) continue;
 
-      const texts = container.innerText || "";
-      const nums = texts.match(/\d[\d,.\s]*\d/g);
-      if (nums && nums.length) {
-        let best = 0;
-        nums.forEach((x) => {
-          const v = parseAmountNumber(x);
-          if (v > best) best = v;
-        });
-        if (best > 0) return best;
+      // row 안에서 가장 "그럴듯한" 금액 요소 우선 탐색
+      // (strong/b/우측 정렬/price 클래스 등)
+      const prefer = row.querySelector("strong, b, .price, .amount, .value, [class*='price'], [class*='amount']");
+      if (prefer) {
+        const v = parseAmountNumber(prefer.innerText);
+        if (v > 0) return v;
       }
 
-      const sib = node.nextElementSibling;
+      // row 텍스트에서 금액 추출 (여러 개면 마지막을 선택하도록 parseAmountNumber가 처리)
+      const v2 = parseAmountNumber(row.innerText);
+      if (v2 > 0) return v2;
+
+      // 다음 형제에 값이 있을 수도 있음
+      const sib = row.nextElementSibling;
       if (sib) {
-        const v = parseAmountNumber(sib.innerText);
-        if (v > 0) return v;
+        const v3 = parseAmountNumber(sib.innerText);
+        if (v3 > 0) return v3;
       }
     }
     return 0;
   }
 
-  // dataLayer에서 value 추출
   function extractAmountFromDataLayer() {
     try {
       const dl = window.dataLayer;
@@ -225,8 +203,22 @@
     return 0;
   }
 
-  // selector + label + dataLayer 통합
+  /**
+   * ✅ amount 최종 추출 우선순위:
+   * 1) "총 주문금액" 라벨 기반
+   * 2) dataLayer
+   * 3) 마지막 fallback (기존 selector)
+   */
   function extractAmountStrong() {
+    // 1) 총 주문금액 우선
+    const byTotal = extractTotalOrderAmount();
+    if (byTotal > 0) return byTotal;
+
+    // 2) dataLayer
+    const byDL = extractAmountFromDataLayer();
+    if (byDL > 0) return byDL;
+
+    // 3) fallback selectors
     const selectors = [
       ".css-x99dng",
       ".css-z3pbio",
@@ -249,12 +241,6 @@
       const v = parseAmountNumber(el.innerText);
       if (v > 0) return v;
     }
-
-    const byLabel = extractAmountByLabel();
-    if (byLabel > 0) return byLabel;
-
-    const byDL = extractAmountFromDataLayer();
-    if (byDL > 0) return byDL;
 
     return 0;
   }
@@ -280,9 +266,7 @@
   }
 
   function executePay(params) {
-    // ★ ITEM_NAME byte 제한 적용
     params.itemName = sanitizeItemName(params.itemName);
-
     console.log(LOG_PREFIX + "Calling MARU.pay params:", params);
 
     setTimeout(function () {
@@ -316,19 +300,12 @@
     const advanceMsg = data.result.advanceMsg || data.result.resultMsg || "";
 
     if (resultCd === "0000") {
-      const trackId =
-        data.pay && data.pay.trackId ? data.pay.trackId : getURLParam("order_no");
+      const trackId = data.pay && data.pay.trackId ? data.pay.trackId : getURLParam("order_no");
       console.log(LOG_PREFIX + "Payment Success! Redirecting...");
-      location.href =
-        getRedirectUrl(CONFIG.PATHS.SUCCESS) +
-        "?status=success&trackId=" +
-        encodeURIComponent(trackId || "");
+      location.href = getRedirectUrl(CONFIG.PATHS.SUCCESS) + "?status=success&trackId=" + encodeURIComponent(trackId || "");
     } else {
       console.warn(LOG_PREFIX + "Payment Failed/Cancelled:", resultCd, advanceMsg);
-      location.href =
-        getRedirectUrl(CONFIG.PATHS.CANCEL) +
-        "?msg=" +
-        encodeURIComponent(advanceMsg || "결제가 취소/실패했습니다.");
+      location.href = getRedirectUrl(CONFIG.PATHS.CANCEL) + "?msg=" + encodeURIComponent(advanceMsg || "결제가 취소/실패했습니다.");
     }
   };
 
@@ -339,7 +316,7 @@
     function updatePaymentState(method, depositorArea, depositorInput) {
       localStorage.setItem("payMethod", method === "CREDIT" ? "CreditCard" : "BankTransfer");
 
-      // ★ 카드결제면 무통장 영역 완전 숨김
+      // 카드결제면 무통장 영역 완전 숨김
       if (depositorArea) {
         if (method === "CREDIT") {
           depositorArea.style.display = "none";
@@ -383,8 +360,6 @@
           if (input) depositorBlock = input.closest("div");
         }
 
-        console.log(LOG_PREFIX + "Depositor Block found:", depositorBlock);
-
         const customUI = document.createElement("div");
         customUI.className = "pay-method-custom";
         customUI.innerHTML = `
@@ -395,9 +370,7 @@
               flex: 1; padding: 15px; border: 1px solid #ddd; border-radius: 8px;
               background: #fff; font-weight: bold; cursor: pointer; font-size: 16px;
             }
-            .pay-method-custom button.active {
-              border-color: #333; background: #333; color: #fff;
-            }
+            .pay-method-custom button.active { border-color: #333; background: #333; color: #fff; }
             .pay-guide-text { font-size: 13px; color: #666; margin-bottom: 5px; line-height: 1.5; }
             .moved-depositor-block { margin-top: 10px; padding: 10px; border: 1px solid #eee; border-radius: 6px; background: #fafafa; }
           </style>
@@ -428,7 +401,6 @@
           customUI.querySelector('input[name="depositor"]') ||
           (depositorBlock ? depositorBlock.querySelector('input[placeholder*="입금자명"], input[name="depositor"]') : null);
 
-        // 초기 카드결제: 무통장 영역 숨김
         updatePaymentState("CREDIT", depositorArea, depositorInput);
 
         const buttons = customUI.querySelectorAll("button[data-method]");
@@ -438,8 +410,8 @@
             buttons.forEach((b) => b.classList.remove("active"));
             btn.classList.add("active");
             console.log(LOG_PREFIX + "Payment method selected:", method);
-            updatePaymentState(method, depositorArea, depositorInput);
 
+            updatePaymentState(method, depositorArea, depositorInput);
             saveCurrentState("Method Click", method);
           });
         });
@@ -459,12 +431,11 @@
 
       const rawName = itemNameEl ? (itemNameEl.innerText || "").trim() : "상품";
       const qty = qtyEl ? (qtyEl.innerText || "").replace(/[^0-9]/g, "") : "1";
-
-      // ★ itemName을 저장 단계에서부터 byte 제한 적용
       const itemName = sanitizeItemName(rawName);
 
+      // ✅ 여기서 반드시 "총 주문금액" 기반으로 저장
       const amountNum = extractAmountStrong();
-      console.log(LOG_PREFIX + "Amount from selector/dataLayer/text scan:", amountNum);
+      console.log(LOG_PREFIX + "Amount (TOTAL ORDER) =>", amountNum);
 
       let method = overrideMethod;
       if (!method) {
@@ -506,9 +477,7 @@
       document.addEventListener(
         "click",
         function (e) {
-          const btn = e.target.closest(
-            'button[type="submit"], ._btn_payment, .css-1tf84sl, .css-clap0e'
-          );
+          const btn = e.target.closest('button[type="submit"], ._btn_payment, .css-1tf84sl, .css-clap0e');
           if (btn && (btn.innerText || "").includes("결제하기")) {
             const uiState = localStorage.getItem("payMethod");
             const chosen = uiState === "CreditCard" ? "CREDIT" : "BANK";
@@ -521,11 +490,8 @@
       );
     });
 
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", injectCustomPaymentUI);
-    } else {
-      injectCustomPaymentUI();
-    }
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", injectCustomPaymentUI);
+    else injectCustomPaymentUI();
   }
 
   // ---------------- shop_payment_complete ----------------
@@ -540,10 +506,13 @@
 
       const urlOrderNo = getURLParam("order_no");
 
-      let amountNum = stored ? parseAmountNumber(stored.amount) : 0;
+      // ✅ complete 페이지에서는 stored.amount를 최우선으로 사용 (여기서 잘못 뽑으면 큰일남)
+      let amountNum = stored ? parseInt(String(stored.amount || "0"), 10) : 0;
+
+      // 0일 때만 마지막 수단으로 총주문금액 재추출
       if (!amountNum || amountNum <= 0) {
-        const recovered = extractAmountStrong();
-        console.log(LOG_PREFIX + "Amount recovered on complete page =>", recovered);
+        const recovered = extractTotalOrderAmount();
+        console.log(LOG_PREFIX + "Amount recovered on complete page (TOTAL) =>", recovered);
         amountNum = recovered;
       }
 
@@ -563,8 +532,8 @@
 
       if (!amountNum || amountNum <= 0) {
         alert(
-          `${location.hostname} 내용:\n\n결제금액을 읽지 못해서 결제를 진행할 수 없습니다. (amount=0)\n` +
-            `콘솔 로그에서 amount 관련 줄 캡처를 보내주세요.`
+          `${location.hostname} 내용:\n\n결제금액(총 주문금액)을 읽지 못해서 결제를 진행할 수 없습니다. (amount=0)\n` +
+            `콘솔에 뜨는 Amount 로그 캡처를 보내주세요.`
         );
         console.error(LOG_PREFIX + "Blocked: amount=0", params);
         return;
@@ -575,7 +544,7 @@
         createLoadingOverlay();
         executePay(params);
       } else {
-        console.log(LOG_PREFIX + "BANK intent or no stored intent -> do nothing");
+        console.log(LOG_PREFIX + "BANK intent -> do nothing");
       }
     });
   }
@@ -586,9 +555,6 @@
     else if (pathMatches(CONFIG.PATHS.CONFIRM)) handleShopPaymentComplete();
   }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", initRouter);
-  } else {
-    initRouter();
-  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initRouter);
+  else initRouter();
 })();
