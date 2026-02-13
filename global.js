@@ -1,35 +1,20 @@
 /**
- * Fintree Payment Universal Script (Bagdown customized)
+ * Fintree Payment Universal Script (Vercel Hosted)
  * Combined with Payment Induction & Server-side Verification
- *
- * - Domain allowlist: bagdown.shop (+ www) + qorekdnsqor1.imweb.me
- * - Keys updated:
- *   - TID: TMN009875
- *   - PUBLIC_KEY: pk_1fc0-d72bd2-31f-a22a1
- *
- * Requires:
- * <script type="text/javascript" src="https://api.ghpayments.kr/js/clientsideV2.js"></script>
- * (MARU.pay usage: GH Payments guide/sample) :contentReference[oaicite:2]{index=2} :contentReference[oaicite:3]{index=3}
  */
 
 (function () {
     const LOG_PREFIX = "[Fintree Vercel] ";
 
+
     // --- Domain Restriction ---
-    // ✅ 허용된 도메인 리스트 (백다운 추가)
+    // 허용된 도메인 리스트
     const ALLOWED_HOSTNAMES = [
-        'shue1.imweb.me',
-        'shue1.com',
+        'qorekdnsqor1.imweb.me',
+        'bagdown.shop',
         'localhost',
         '127.0.0.1',
-        'gh-payment-vercel-global-2-0.vercel.app',
-
-        // ✅ Bagdown
-        'bagdown.shop',
-        'www.bagdown.shop',
-
-        // ✅ Your Imweb test domain
-        'qorekdnsqor1.imweb.me'
+        'bagdown-payment.netlify.app'
     ];
 
     if (!ALLOWED_HOSTNAMES.includes(location.hostname) && !location.hostname.endsWith('.vercel.app')) {
@@ -38,12 +23,15 @@
     }
     // ---------------------------
 
+
+
+
     console.log(LOG_PREFIX + "Initialized. Protocol:", location.protocol, "Path:", location.pathname);
 
     // --- Configurations ---
 
     // 스크립트가 로드된 호스트 도메인을 동적으로 감지 (API 호출 경로 자동 설정)
-    let hostedDomain = 'https://gh-payment-vercel-global-2-0.vercel.app'; // 기본값
+    let hostedDomain = 'https://bagdown-payment.netlify.app'; // 기본값 (새 프로젝트)
     try {
         if (document.currentScript && document.currentScript.src) {
             const scriptUrl = new URL(document.currentScript.src);
@@ -54,10 +42,8 @@
     }
 
     const CONFIG = {
-        // ✅ 네가 받은 키값으로 교체 완료
         PUBLIC_KEY: 'pk_1fc0-d72bd2-31f-a22a1',
         TID: 'TMN009875',
-
         VERIFY_API: '/api/verify',
         HOSTED_DOMAIN: hostedDomain,
         PATHS: {
@@ -107,6 +93,8 @@
         const results = new RegExp("[\\?&]" + name + "=([^&#]*)").exec(location.search);
         return results === null ? "" : decodeURIComponent(results[1].replace(/\+/g, " "));
     }
+
+    // --- Page Handlers ---
 
     // --- Shared Payment Logic ---
 
@@ -180,7 +168,7 @@
         function injectCustomPaymentUI() {
             const checkInterval = setInterval(() => {
                 // 결제수단 섹션 찾기 (헤더 텍스트로 찾음)
-                const headers = Array.from(document.querySelectorAll('header, h2, h3, .title, .css-17g8nhj'));
+                const headers = Array.from(document.querySelectorAll('header, h2, h3, .title, .css-17g8nhj')); // .css-17g8nhj 추가
                 const paymentHeader = headers.find(h => h.innerText.includes('결제수단'));
 
                 if (!paymentHeader) return;
@@ -188,7 +176,7 @@
                 const paymentSection = paymentHeader.closest('div[class*="css-"]') || paymentHeader.closest('.pay-method-section') || paymentHeader.parentElement;
                 if (!paymentSection) return;
 
-                // 이미 주입되었는지 확인
+                // 이미 주입되었는지 확인, 혹은 이미 커스텀 UI가 있는지
                 if (paymentSection.querySelector('.pay-method-custom')) {
                     clearInterval(checkInterval);
                     return;
@@ -201,14 +189,20 @@
                 if (!bankRadio) return;
 
                 // 무통장입금 라디오 강제 선택
-                if (!bankRadio.checked) bankRadio.click();
+                if (!bankRadio.checked) {
+                    bankRadio.click();
+                }
 
-                // 입금자명/은행선택 컨테이너(.css-1hw29i9) 찾아서 커스텀UI로 이동
+                // [중요] 입금자명/은행선택 컨테이너(.css-1hw29i9)를 찾아서 추출 (fieldset 숨기기 전에 대피)
+                // shop_payment.html 구조상: fieldset -> div -> div.css-1hw29i9
+                // 이 요소를 커스텀 UI 쪽으로 이동시켜야 함.
                 let depositorBlock = document.querySelector('.css-1hw29i9');
                 if (!depositorBlock) {
+                    // 클래스가 없을 경우 input의 부모를 찾음
                     const input = document.querySelector('input[placeholder*="입금자명"]') || document.querySelector('input[name="depositor"]');
                     if (input) {
                         depositorBlock = input.closest('div') === input.parentElement ? input.parentElement : input.closest('div');
+                        // 만약 부모가 label이면 그 위
                         if (depositorBlock && depositorBlock.tagName === 'LABEL') depositorBlock = depositorBlock.parentElement;
                     }
                 }
@@ -238,11 +232,12 @@
                         color: #fff;
                     }
                     .pay-guide-text { font-size: 13px; color: #666; margin-bottom: 5px; line-height: 1.5; }
+                    /* 이식된 입금자명 컨테이너 스타일 보정 */
                     .moved-depositor-block { margin-top: 10px; padding: 10px; border: 1px solid #eee; border-radius: 4px; background: #fafafa; }
                 </style>
                 <div class="pay-guide-text">
                     * 아래 버튼을 눌러 결제수단을 선택해주세요.<br>
-                    * 카드결제 오류 시 고객센터로 문의주세요.
+                    * 카드결제 오류 시 <a href="#" onclick="alert('카드사 정책에 따라 할부가 제한될 수 있습니다.'); return false;">고객센터</a>로 문의주세요.
                 </div>
                 <div class="pay-method-buttons">
                     <button type="button" data-method="CREDIT" class="active">💳 카드결제</button>
@@ -260,15 +255,18 @@
                     customUI.querySelector('#fnt-depositor-area').appendChild(depositorBlock);
                 }
 
-                // 기존 fieldset 숨기기
+                // [중요] 이제 기존 fieldset 숨기기
                 const fieldset = bankRadio.closest('fieldset');
-                if (fieldset) fieldset.style.display = 'none';
+                if (fieldset) {
+                    fieldset.style.display = 'none';
+                }
 
                 // 이벤트 리스너
                 const buttons = customUI.querySelectorAll('button');
                 const bankSelect = document.querySelector('select[name^="cash_idx"]');
                 const depositorInput = customUI.querySelector('input[placeholder*="입금자명"]') || customUI.querySelector('input[name="depositor"]');
 
+                // 초기 상태 설정
                 updatePaymentState('CREDIT', bankSelect, depositorInput, depositorBlock);
 
                 buttons.forEach(btn => {
@@ -292,23 +290,28 @@
         function updatePaymentState(method, bankSelect, depositorInput, depositorBlock) {
             console.log(LOG_PREFIX + "updatePaymentState:", method, depositorBlock);
 
+            // 1. localStorage 저장
             const stateMethod = method === 'CREDIT' ? 'CreditCard' : 'BankTransfer';
             localStorage.setItem('payMethod', stateMethod);
 
+            // 2. 입력란/블록 표시/숨김
+            // 유저 제안: "display: flex" 사용
             if (depositorBlock) {
                 if (method === 'CREDIT') {
                     depositorBlock.style.display = 'none';
                     if (depositorInput) depositorInput.value = '카드결제';
                 } else {
-                    depositorBlock.style.display = 'flex';
-                    depositorBlock.style.flexDirection = 'column';
+                    depositorBlock.style.display = 'flex'; // 혹은 block. 유저 요청대로 flex 시도
+                    depositorBlock.style.flexDirection = 'column'; // 보통 세로 정렬이 안전함
                     depositorBlock.style.gap = '8px';
                     if (depositorInput && depositorInput.value === '카드결제') depositorInput.value = '';
                 }
             } else if (depositorInput) {
+                // 블록을 못 찾았을 경우 input이라도 제어
                 depositorInput.style.display = (method === 'CREDIT') ? 'none' : 'block';
             }
 
+            // 3. 계좌 선택
             if (bankSelect) {
                 if (bankSelect.options.length > 1) {
                     const index = (method === 'CREDIT') ? 0 : 1;
@@ -326,6 +329,7 @@
             let ordererEmail = document.querySelector('input[name="ordererEmail"]')?.value || '';
 
             if (!ordererName || !ordererTel) {
+                // 1. "주문자 정보" 헤더 찾기 (다양한 선택자 시도)
                 const headers = Array.from(document.querySelectorAll('header, h2, h3, .title, .css-17g8nhj'));
                 const orderHeader = headers.find(h => {
                     const text = h.innerText.replace(/\s/g, '');
@@ -333,12 +337,18 @@
                 });
 
                 if (orderHeader) {
+                    // 헤더의 부모 컨테이너 범위 내에서 정보를 찾음
+                    // 1차 시도: 바로 다음 형제 요소 (div.content 등)
+                    // 2차 시도: 부모의 자식들 중 header가 아닌 것들
                     let container = orderHeader.nextElementSibling;
                     if (!container || container.tagName === 'HR') container = orderHeader.parentElement;
 
                     if (container) {
+                        // 2. 텍스트 노드 추출 (p, span, div)
+                        // 입력 필드가 아닌 텍스트로 된 정보 추출 시도
                         const candidates = Array.from(container.querySelectorAll('p, span, div'))
                             .filter(el => {
+                                // 자식이 없는 '말단' 요소이거나, 텍스트만 포함한 요소
                                 if (el.children.length > 0 && el.innerText.length > 50) return false;
                                 const text = el.innerText.trim();
                                 if (text.length < 2) return false;
@@ -347,6 +357,7 @@
                                 return true;
                             });
 
+                        // 전화번호 패턴 (010-XXXX-XXXX) 찾기
                         const telRegex = /01[016789]-?\d{3,4}-?\d{4}/;
                         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -354,11 +365,13 @@
                             const text = el.innerText.trim();
                             if (!ordererTel && telRegex.test(text)) ordererTel = text.match(telRegex)[0];
                             if (!ordererEmail && emailRegex.test(text)) ordererEmail = text;
+                            // 이름: 전화번호나 이메일이 아니고, 길이가 적당하며, 한글인 경우 (대략적 추측)
                             if (!ordererName && !telRegex.test(text) && !emailRegex.test(text) && /^[가-힣]{2,5}$/.test(text)) {
                                 ordererName = text;
                             }
                         });
 
+                        // 3. Fallback: 순서 기반 (이름 -> 전화번호)
                         if (!ordererName && candidates.length >= 2) {
                             ordererName = candidates[0].innerText.trim();
                             if (!ordererTel) ordererTel = candidates[1].innerText.trim();
@@ -377,10 +390,14 @@
 
             let method = overrideMethod;
             if (!method) {
+                // [Fix] 커스텀 UI 상태(payMethod)를 우선 확인
                 const uiState = localStorage.getItem('payMethod');
-                if (uiState === 'CreditCard') method = 'CREDIT';
-                else if (uiState === 'BankTransfer') method = 'BANK';
-                else {
+                if (uiState === 'CreditCard') {
+                    method = 'CREDIT';
+                } else if (uiState === 'BankTransfer') {
+                    method = 'BANK';
+                } else {
+                    // Fallback: DOM에서 활성화된 버튼 찾기
                     const activeBtn = document.querySelector('.pay-method-custom button.active');
                     method = activeBtn ? activeBtn.getAttribute('data-method') : 'BANK';
                 }
@@ -401,12 +418,15 @@
             if (totalAmount !== '0') {
                 localStorage.setItem('fintree_pay_data', JSON.stringify(paymentData));
                 console.log(LOG_PREFIX + `Auto-Save [${source}] [${method}]:`, paymentData);
-                return paymentData;
+                return paymentData; // Return data for direct use
             }
             return null;
         }
 
         window.addEventListener('load', function () {
+            // injectCreditCardOption 함수는 더 이상 사용하지 않음
+            // injectCreditCardOption(); 
+
             const inputNames = ["ordererName", "ordererCall", "ordererEmail"];
             inputNames.forEach(name => {
                 const el = document.querySelector(`input[name="${name}"]`);
@@ -418,23 +438,45 @@
             }, 2000);
 
             document.addEventListener('click', function (e) {
+                // 버튼 식별 (기존 클래스 + case2 클래스 css-clap0e 추가)
                 const btn = e.target.closest('button[type="submit"], ._btn_payment, .css-1tf84sl, .css-clap0e');
                 if (btn && btn.innerText.includes('결제하기')) {
                     console.log(LOG_PREFIX + "Payment button clicked. Allowing form submission.");
+
+                    // localStorage에서 저장된 의도 확인 (라디오 버튼 상태와 무관)
+                    try {
+                        const stored = JSON.parse(localStorage.getItem('fintree_pay_data'));
+                        if (stored && stored.method === 'CREDIT') {
+                            console.log(LOG_PREFIX + "Stored intent: CREDIT -> Will process on next page");
+                        } else {
+                            console.log(LOG_PREFIX + "Stored intent: BANK or undefined -> Normal Imweb flow");
+                        }
+                    } catch (e) {
+                        console.log(LOG_PREFIX + "No stored data");
+                    }
+
+                    // 무조건 폼 제출 허용 (아임웹이 무통장입금으로 주문 생성 후 리다이렉트)
                     return true;
                 }
             }, true);
         });
 
-        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', injectCustomPaymentUI);
-        else injectCustomPaymentUI();
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', injectCustomPaymentUI);
+        } else {
+            injectCustomPaymentUI();
+        }
 
-        setInterval(() => { saveCurrentState(); }, 1000);
+        // 주기적으로 상태 저장
+        setInterval(() => {
+            saveCurrentState();
+        }, 1000);
     }
 
     function handleShopPaymentComplete() {
         console.log(LOG_PREFIX + "Routing: Auth/Confirmation Page");
 
+        // 버튼 생성 감시 함수
         function startButtonWatcher(p) {
             const observer = new MutationObserver((mutations, obs) => {
                 const container = document.querySelector('.css-k008qs');
@@ -456,6 +498,7 @@
         }
 
         window.addEventListener('load', function () {
+            // URL 파라미터에서 주문 정보 수집 시도 (아임웹이 넘겨주는 order_no 등)
             let params = {
                 trackId: getURLParam('order_no'),
                 amount: '0',
@@ -465,9 +508,11 @@
                 itemName: '상품'
             };
 
+            // localStorage에서 보완 정보 가져오기
             try {
                 var stored = JSON.parse(localStorage.getItem('fintree_pay_data'));
                 if (stored) {
+                    // 주문번호(trackId)는 URL의 것이 가장 정확하므로 우선순위
                     if (!params.trackId) params.trackId = stored.orderNo;
                     if (stored.amount) params.amount = stored.amount;
                     params.userName = stored.userName;
@@ -478,23 +523,30 @@
                     if (baseName.length > 20) baseName = baseName.substring(0, 20) + "...";
                     params.itemName = baseName + (stored.qty > 1 ? " 외 " + (stored.qty - 1) + "건" : "");
 
+                    // [핵심 수정] URL의 order_no가 localStorage와 다르면 localStorage 갱신
+                    // shop_payment_complete 페이지의 order_no가 실제 결제에 사용되는 trackId이므로
                     if (params.trackId && params.trackId !== stored.orderNo) {
                         console.log(LOG_PREFIX + "Updating localStorage orderNo:", stored.orderNo, "->", params.trackId);
                         stored.orderNo = params.trackId;
                         localStorage.setItem('fintree_pay_data', JSON.stringify(stored));
                     }
 
+                    // 무통장입금일 경우 -> 버튼 생성만 (자동 실행 X)
                     startButtonWatcher(params);
 
+                    // 신용카드 결제 의도였는지 확인
                     if (stored.method === 'CREDIT') {
                         console.log(LOG_PREFIX + "Detected CREDIT intent from previous step. Launching Payment...");
 
+                        // 이미 결제 완료된 건인지 체크 (중복 실행 방지)
                         if (stored.status === 'DONE') {
                             console.log("Payment already completed for this session.");
                             return;
                         }
 
+                        // 결제 실행
                         createLoadingOverlay();
+
                         executePay(params);
                     }
                 }
@@ -507,12 +559,17 @@
     function handlePaymentSuccess() {
         console.log(LOG_PREFIX + "Routing: Result Page");
 
+        // SDK redirect 방식의 result JSON 파라미터 파싱
         function parseSDKResult() {
             try {
                 const resultParam = getURLParam('result');
                 if (resultParam) {
                     let cleaned = resultParam;
-                    if (cleaned.startsWith('"') && cleaned.endsWith('"')) cleaned = cleaned.slice(1, -1);
+                    // 1단계: 앞뒤 따옴표 제거 (SDK가 "{ ... }" 형태로 감싸서 보냄)
+                    if (cleaned.startsWith('"') && cleaned.endsWith('"')) {
+                        cleaned = cleaned.slice(1, -1);
+                    }
+                    // 2단계: 이스케이프된 따옴표 복원
                     cleaned = cleaned.replace(/\\"/g, '"');
                     const parsed = JSON.parse(cleaned);
                     console.log(LOG_PREFIX + "SDK Result parsed from URL:", parsed);
@@ -530,56 +587,90 @@
             let trxId = null;
             let sdkResult = null;
 
+            // --- 1단계: SDK 결과에서 정보 추출 ---
             sdkResult = parseSDKResult();
             if (sdkResult && sdkResult.pay) {
-                if (!trackId && sdkResult.pay.trackId) trackId = sdkResult.pay.trackId;
-                if (sdkResult.pay.trxId) trxId = sdkResult.pay.trxId;
+                if (!trackId && sdkResult.pay.trackId) {
+                    trackId = sdkResult.pay.trackId;
+                    console.log(LOG_PREFIX + "TrackId from SDK result:", trackId);
+                }
+                if (sdkResult.pay.trxId) {
+                    trxId = sdkResult.pay.trxId;
+                    console.log(LOG_PREFIX + "TrxId from SDK result:", trxId);
+                }
             }
 
+            // Fallback: localStorage에서 trackId
             if (!trackId) {
                 try {
                     const stored = JSON.parse(localStorage.getItem('fintree_pay_data'));
-                    if (stored && stored.orderNo) trackId = stored.orderNo;
+                    if (stored && stored.orderNo) {
+                        trackId = stored.orderNo;
+                        console.log(LOG_PREFIX + "TrackId from localStorage:", trackId);
+                    }
                 } catch (e) { }
             }
 
+            // --- 2단계: 필수값 기반 성공 판정 (SDK 결과 신뢰) ---
             let isSuccess = false;
 
-            if (sdkResult && sdkResult.result && sdkResult.result.resultCd === '0000') isSuccess = true;
-            else if (status === 'success' && trackId) isSuccess = true;
+            // 판정 조건 1: SDK result에서 resultCd가 0000
+            if (sdkResult && sdkResult.result && sdkResult.result.resultCd === '0000') {
+                isSuccess = true;
+                console.log(LOG_PREFIX + "SUCCESS: SDK resultCd is 0000");
+            }
+            // 판정 조건 2: URL에 status=success + trackId 존재
+            else if (status === 'success' && trackId) {
+                isSuccess = true;
+                console.log(LOG_PREFIX + "SUCCESS: URL status=success with trackId");
+            }
 
+            // --- 3단계: 결과 처리 ---
             if (isSuccess) {
-                console.log(LOG_PREFIX + "Payment confirmed.");
-
-                try {
-                    if (CONFIG.VERIFY_API) {
-                        let verifyParams = new URLSearchParams();
-                        if (trackId) verifyParams.append('trackId', trackId);
-                        if (trxId) verifyParams.append('trxId', trxId);
-
-                        try {
-                            const stored = JSON.parse(localStorage.getItem('fintree_pay_data'));
-                            if (stored) {
-                                if (stored.userName) verifyParams.append('userName', stored.userName);
-                                if (stored.userTel) verifyParams.append('userTel', stored.userTel);
-                                if (stored.userEmail) verifyParams.append('userEmail', stored.userEmail);
-                            }
-                        } catch (e) { }
-
-                        fetch(`${CONFIG.HOSTED_DOMAIN}${CONFIG.VERIFY_API}?${verifyParams.toString()}`)
-                            .then(r => r.json())
-                            .then(data => console.log(LOG_PREFIX + "Verify API (background):", data.result))
-                            .catch(err => console.warn(LOG_PREFIX + "Verify API background error (ignored):", err.message));
+                // 주문번호 표시
+                if (trackId) {
+                    const orderInfo = document.getElementById('order-info');
+                    const orderNoDisplay = document.getElementById('order-no-display');
+                    if (orderInfo && orderNoDisplay) {
+                        orderNoDisplay.innerText = trackId;
+                        orderInfo.style.display = 'block';
                     }
+                }
+
+                console.log(LOG_PREFIX + "Payment confirmed. Sending email in background...");
+
+                // 백그라운드: 이메일 발송용 Verify API 호출 (결과는 무시)
+                try {
+                    let verifyParams = new URLSearchParams();
+                    if (trackId) verifyParams.append('trackId', trackId);
+                    if (trxId) verifyParams.append('trxId', trxId);
+
+                    // localStorage에서 고객 정보 추가
+                    try {
+                        const stored = JSON.parse(localStorage.getItem('fintree_pay_data'));
+                        if (stored) {
+                            if (stored.userName) verifyParams.append('userName', stored.userName);
+                            if (stored.userTel) verifyParams.append('userTel', stored.userTel);
+                            if (stored.userEmail) verifyParams.append('userEmail', stored.userEmail);
+                        }
+                    } catch (e) { }
+
+                    fetch(`${CONFIG.HOSTED_DOMAIN}${CONFIG.VERIFY_API}?${verifyParams.toString()}`)
+                        .then(r => r.json())
+                        .then(data => console.log(LOG_PREFIX + "Verify API (background):", data.result))
+                        .catch(err => console.warn(LOG_PREFIX + "Verify API background error (ignored):", err.message));
                 } catch (e) {
                     console.warn(LOG_PREFIX + "Background verify call failed (ignored):", e.message);
                 }
 
             } else {
+                // 실패: 취소 페이지로 리다이렉트
                 let failMsg = "결제가 완료되지 않았습니다.";
-                if (sdkResult && sdkResult.result && sdkResult.result.advanceMsg) failMsg = sdkResult.result.advanceMsg;
-                else if (status === 'fail') failMsg = getURLParam('msg') || failMsg;
-
+                if (sdkResult && sdkResult.result && sdkResult.result.advanceMsg) {
+                    failMsg = sdkResult.result.advanceMsg;
+                } else if (status === 'fail') {
+                    failMsg = getURLParam('msg') || failMsg;
+                }
                 console.warn(LOG_PREFIX + "Payment not successful:", failMsg);
                 location.href = getRedirectUrl(CONFIG.PATHS.CANCEL) + '?msg=' + encodeURIComponent(failMsg);
             }
@@ -654,8 +745,10 @@
         }
 
         const btn = document.getElementById('refund-btn');
-        if (btn) setupRefundButton(btn);
-        else {
+        if (btn) {
+            setupRefundButton(btn);
+        } else {
+            // Retry once for safety
             setTimeout(() => {
                 const retryBtn = document.getElementById('refund-btn');
                 if (retryBtn) setupRefundButton(retryBtn);
@@ -666,14 +759,24 @@
 
     // --- Boot (Routing) ---
     function initRouter() {
-        if (pathMatches(CONFIG.PATHS.INFO)) handleShopPayment();
-        else if (pathMatches(CONFIG.PATHS.CONFIRM)) handleShopPaymentComplete();
-        else if (pathMatches(CONFIG.PATHS.SUCCESS)) handlePaymentSuccess();
-        else if (pathMatches(CONFIG.PATHS.CANCEL)) handlePaymentCancel();
-        else if (pathMatches(CONFIG.PATHS.REFUND)) handlePaymentRefund();
+        if (pathMatches(CONFIG.PATHS.INFO)) {
+            handleShopPayment();
+        } else if (pathMatches(CONFIG.PATHS.CONFIRM)) {
+            handleShopPaymentComplete();
+        } else if (pathMatches(CONFIG.PATHS.SUCCESS)) {
+            handlePaymentSuccess();
+        } else if (pathMatches(CONFIG.PATHS.CANCEL)) {
+            handlePaymentCancel();
+        } else if (pathMatches(CONFIG.PATHS.REFUND)) {
+            handlePaymentRefund();
+        }
     }
 
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initRouter);
-    else initRouter();
+    // --- 최종 실행 ---
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initRouter);
+    } else {
+        initRouter();
+    }
 
 })();
