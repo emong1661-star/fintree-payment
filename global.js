@@ -1,6 +1,9 @@
 /**
  * Fintree Payment Universal Script (Netlify Hosted)
- * PATCH v2: amount extraction 강화 (DOM + dataLayer + 텍스트 스캔)
+ * - Imweb shop_payment / shop_payment_complete 흐름에서
+ *   "카드결제" 의도 저장 -> 주문 생성 후 complete 페이지에서 MARU.pay 실행
+ * - 핵심: amount(총 주문금액) 추출을 0이 안 나오게 강력하게 보강
+ * - 카드결제 선택 시 무통장 영역(계좌/입금자명) 완전 숨김
  */
 
 (function () {
@@ -29,6 +32,7 @@
     );
     return;
   }
+  // ---------------------------
 
   console.log(
     LOG_PREFIX + "Initialized. Protocol:",
@@ -37,7 +41,7 @@
     location.pathname
   );
 
-  // --- Hosted Domain Detect ---
+  // --- Hosted domain detect (Netlify/Vercel) ---
   let hostedDomain = "https://bagdown-payment.netlify.app";
   try {
     if (document.currentScript && document.currentScript.src) {
@@ -62,9 +66,7 @@
     },
   };
 
-  // -------------------------
-  // Helpers
-  // -------------------------
+  // ---------------- Helper ----------------
   function pathMatches(targetPath) {
     const currentPath = location.pathname;
     return (
@@ -76,144 +78,159 @@
   }
 
   function getRedirectUrl(targetPath) {
-    const isLocal = location.pathname.endsWith(".html") || location.protocol === "file:";
+    const isLocal =
+      location.pathname.endsWith(".html") || location.protocol === "file:";
     return targetPath + (isLocal ? ".html" : "");
   }
 
   function getURLParam(name) {
-    const results = new RegExp("[\\?&]" + name + "=([^&#]*)").exec(location.search);
-    return results === null ? "" : decodeURIComponent(results[1].replace(/\+/g, " "));
+    const results = new RegExp("[\\?&]" + name + "=([^&#]*)").exec(
+      location.search
+    );
+    return results === null
+      ? ""
+      : decodeURIComponent(results[1].replace(/\+/g, " "));
   }
 
-  function parseMoney(text) {
-    if (!text) return "0";
-    const n = String(text).replace(/[^\d]/g, "");
-    return n && n.length ? n : "0";
+  function parseAmountNumber(input) {
+    if (!input) return 0;
+    const s = String(input);
+    // 1) 숫자/콤마/점/공백 외 제거
+    const cleaned = s.replace(/[^\d.,\s]/g, "");
+    // 2) 콤마 제거 후 숫자만
+    const n = parseInt(cleaned.replace(/[,\s.]/g, ""), 10);
+    return Number.isFinite(n) ? n : 0;
   }
 
-  // ✅ 핵심: amount 추출을 "확실히" 해주는 함수
-  function getAmountSmart() {
-    // 1) 흔한 DOM 셀렉터들
+  // "총 주문금액" 라벨 기반 추출(가장 강력)
+  function extractAmountByLabel() {
+    const labelCandidates = [
+      "총 주문금액",
+      "총주문금액",
+      "결제금액",
+      "총 결제금액",
+      "총결제금액",
+      "합계",
+    ];
+
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+    let node;
+    while ((node = walker.nextNode())) {
+      const t = (node.innerText || "").trim();
+      if (!t) continue;
+
+      // 라벨 텍스트가 "딱" 포함된 작은 요소를 찾음
+      const matched = labelCandidates.find((k) =>
+        t.replace(/\s/g, "").includes(k.replace(/\s/g, ""))
+      );
+      if (!matched) continue;
+
+      // 1) 같은 컨테이너에서 숫자 찾기
+      const container =
+        node.closest("div, li, section, article") || node.parentElement;
+      if (!container) continue;
+
+      const texts = container.innerText || "";
+      const nums = texts.match(/\d[\d,.\s]*\d/g);
+      if (nums && nums.length) {
+        // 가장 큰 숫자를 금액으로 가정 (배송비/수량보다 보통 큼)
+        let best = 0;
+        nums.forEach((x) => {
+          const v = parseAmountNumber(x);
+          if (v > best) best = v;
+        });
+        if (best > 0) return best;
+      }
+
+      // 2) 바로 다음 형제에서 숫자 찾기
+      const sib = node.nextElementSibling;
+      if (sib) {
+        const v = parseAmountNumber(sib.innerText);
+        if (v > 0) return v;
+      }
+    }
+
+    return 0;
+  }
+
+  // dataLayer에서 구매 value 잡기
+  function extractAmountFromDataLayer() {
+    try {
+      const dl = window.dataLayer;
+      if (!Array.isArray(dl)) return 0;
+
+      // 뒤에서부터 검색(최근 이벤트 우선)
+      for (let i = dl.length - 1; i >= 0; i--) {
+        const e = dl[i];
+        if (!e || typeof e !== "object") continue;
+
+        // GA4 purchase 형태들
+        // 1) e.ecommerce.value
+        if (e.ecommerce && typeof e.ecommerce === "object") {
+          const v1 = parseAmountNumber(e.ecommerce.value);
+          if (v1 > 0) return v1;
+
+          // 2) e.ecommerce.purchase.actionField.revenue 같은 UA 변형
+          const v2 =
+            e.ecommerce.purchase &&
+            e.ecommerce.purchase.actionField &&
+            parseAmountNumber(e.ecommerce.purchase.actionField.revenue);
+          if (v2 > 0) return v2;
+        }
+
+        // 3) value 직접
+        const v3 = parseAmountNumber(e.value);
+        if (v3 > 0) return v3;
+      }
+    } catch (err) {}
+    return 0;
+  }
+
+  // selector 기반 + label/dataLayer fallback 통합
+  function extractAmountStrong() {
+    // 1) 기존 selector들(너 페이지 구조 대응)
     const selectors = [
       ".css-x99dng",
       ".css-z3pbio",
       ".css-1i1erzf",
       "._total_price",
       ".total_price",
-      "[data-total-price]",
-      "[data-price]",
-      "[data-amount]",
       ".order_price",
-      ".pay_price",
+      ".order-total",
+      "[data-total-price]",
     ];
 
     for (const sel of selectors) {
       const el = document.querySelector(sel);
-      if (el && el.innerText) {
-        const v = parseMoney(el.innerText);
-        if (v !== "0") {
-          console.log(LOG_PREFIX + "Amount from selector:", sel, "=>", v);
-          return v;
-        }
-      }
+      if (!el) continue;
+
+      // data-attribute 우선
+      const attrV = el.getAttribute && el.getAttribute("data-total-price");
+      const fromAttr = parseAmountNumber(attrV);
+      if (fromAttr > 0) return fromAttr;
+
+      const v = parseAmountNumber(el.innerText);
+      if (v > 0) return v;
     }
 
-    // 2) ✅ dataLayer에서 purchase/value/price 찾기 (네 콘솔의 1040000 JPY가 여기서 나올 가능성 큼)
-    try {
-      const dl = window.dataLayer;
-      if (Array.isArray(dl)) {
-        const keys = ["value", "price", "amount", "total", "revenue", "payment_total", "order_total"];
-        for (let i = dl.length - 1; i >= 0; i--) {
-          const obj = dl[i];
-          if (!obj || typeof obj !== "object") continue;
+    // 2) label 기반
+    const byLabel = extractAmountByLabel();
+    if (byLabel > 0) return byLabel;
 
-          // event가 purchase 계열이면 우선
-          const ev = String(obj.event || "").toLowerCase();
-          const isPurchase =
-            ev.includes("purchase") || ev.includes("payment") || ev.includes("order") || ev.includes("checkout");
+    // 3) dataLayer 기반
+    const byDL = extractAmountFromDataLayer();
+    if (byDL > 0) return byDL;
 
-          for (const k of keys) {
-            if (obj[k] != null) {
-              const candidate = parseMoney(obj[k]);
-              if (candidate !== "0") {
-                console.log(
-                  LOG_PREFIX + "Amount from dataLayer:",
-                  "event=" + obj.event,
-                  "key=" + k,
-                  "=>",
-                  candidate
-                );
-                return candidate;
-              }
-            }
-          }
-
-          // ecommerce.value 같은 구조도 대응
-          if (obj.ecommerce && typeof obj.ecommerce === "object") {
-            const eco = obj.ecommerce;
-            if (eco.value != null) {
-              const v = parseMoney(eco.value);
-              if (v !== "0") {
-                console.log(LOG_PREFIX + "Amount from dataLayer.ecommerce.value =>", v);
-                return v;
-              }
-            }
-            if (eco.purchase && eco.purchase.actionField && eco.purchase.actionField.revenue != null) {
-              const v = parseMoney(eco.purchase.actionField.revenue);
-              if (v !== "0") {
-                console.log(LOG_PREFIX + "Amount from dataLayer.ecommerce.purchase.actionField.revenue =>", v);
-                return v;
-              }
-            }
-          }
-
-          // purchase 이벤트가 아니라도 마지막에 값이 있으면 사용
-          if (!isPurchase) continue;
-        }
-      }
-    } catch (e) {
-      console.warn(LOG_PREFIX + "dataLayer parse failed:", e.message);
-    }
-
-    // 3) ✅ 전체 텍스트 스캔: "¥", "JPY", "원", "KRW" 주변 숫자 후보 중 "가장 큰 값"을 amount로 사용
-    try {
-      const bodyText = (document.body && document.body.innerText) ? document.body.innerText : "";
-      if (bodyText) {
-        const lines = bodyText.split("\n").map(s => s.trim()).filter(Boolean);
-
-        const candidates = [];
-        const moneyRegex = /(?:¥|\bJPY\b|\bKRW\b|원)\s*([0-9][0-9,.\s]{2,})/i;
-        const moneyRegex2 = /([0-9][0-9,.\s]{2,})\s*(?:¥|\bJPY\b|\bKRW\b|원)/i;
-
-        for (const line of lines) {
-          let m = line.match(moneyRegex) || line.match(moneyRegex2);
-          if (m && m[1]) {
-            const v = parseMoney(m[1]);
-            if (v !== "0") candidates.push(parseInt(v, 10));
-          }
-        }
-
-        if (candidates.length) {
-          const max = Math.max(...candidates);
-          console.log(LOG_PREFIX + "Amount from text scan (max candidate) =>", String(max));
-          return String(max);
-        }
-      }
-    } catch (e) {
-      console.warn(LOG_PREFIX + "Text scan failed:", e.message);
-    }
-
-    // 4) 실패
-    console.log(LOG_PREFIX + "Amount not found => 0");
-    return "0";
+    return 0;
   }
 
+  // ---------------- UI/Payment ----------------
   function createLoadingOverlay() {
     if (document.getElementById("fnt-loading-overlay")) return;
     const overlay = document.createElement("div");
     overlay.id = "fnt-loading-overlay";
     overlay.style.cssText =
-      "position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(255,255,255,1); z-index:9998; display:flex; flex-direction:column; align-items:center; justify-content:center; font-family:sans-serif;";
+      "position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(255,255,255,1); z-index:9998; display:flex; flex-direction:column; align-items:center; justify-content:center; font-family:sans-serif; transition: opacity 0.5s;";
     const style = document.createElement("style");
     style.innerHTML = `
       @keyframes fnt-spin { to { transform: rotate(360deg); } }
@@ -228,27 +245,16 @@
   }
 
   function executePay(params) {
-    console.log(LOG_PREFIX + "executePay params:", params);
-
-    // ✅ amount 0이면 절대 실행 안 함
-    if (!params || !params.amount || String(params.amount) === "0") {
-      alert(
-        "결제금액(amount)을 읽지 못해 결제를 진행할 수 없습니다. (amount=0)\n" +
-          "콘솔에 찍힌 'Amount from ...' 로그와 함께 캡처 보내주세요."
-      );
-      console.error(LOG_PREFIX + "Blocked: amount=0", params);
-      return;
-    }
+    console.log(LOG_PREFIX + "Calling MARU.pay params:", params);
 
     setTimeout(function () {
-      if (typeof MARU !== "undefined") {
-        console.log(LOG_PREFIX + "Calling MARU.pay");
+      if (typeof MARU !== "undefined" && MARU && typeof MARU.pay === "function") {
         MARU.pay({
           payRoute: "3d",
           responseFunction: window.paymentResultByJS,
           publicKey: CONFIG.PUBLIC_KEY,
           trackId: params.trackId,
-          amount: params.amount,
+          amount: params.amount, // 반드시 숫자(문자열 OK)
           redirectUrl: window.location.origin + getRedirectUrl(CONFIG.PATHS.SUCCESS),
           itemName: params.itemName,
           userEmail: params.userEmail,
@@ -260,71 +266,62 @@
       } else {
         console.error(LOG_PREFIX + "MARU SDK Not Found.");
         alert("결제 모듈을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
-        location.reload();
       }
-    }, 200);
+    }, 300);
   }
 
   window.paymentResultByJS = function (data) {
-    console.log(LOG_PREFIX + "SDK Callback Data:", data);
+    console.log(LOG_PREFIX + "SDK Callback Data Received:", data);
     if (!data || !data.result) return;
 
-    var resultCd = data.result.resultCd;
-    var msg = data.result.advanceMsg || data.result.resultMsg || "";
+    const resultCd = data.result.resultCd;
+    const advanceMsg = data.result.advanceMsg || data.result.resultMsg || "";
 
     if (resultCd === "0000") {
-      var trackId =
-        (data.pay && data.pay.trackId) ? data.pay.trackId : getURLParam("order_no");
+      const trackId =
+        data.pay && data.pay.trackId ? data.pay.trackId : getURLParam("order_no");
+      console.log(LOG_PREFIX + "Payment Success! Redirecting...");
       location.href =
-        getRedirectUrl(CONFIG.PATHS.SUCCESS) + "?status=success&trackId=" + trackId;
+        getRedirectUrl(CONFIG.PATHS.SUCCESS) +
+        "?status=success&trackId=" +
+        encodeURIComponent(trackId || "");
     } else {
+      console.warn(LOG_PREFIX + "Payment Failed/Cancelled:", resultCd, advanceMsg);
       location.href =
-        getRedirectUrl(CONFIG.PATHS.CANCEL) + "?msg=" + encodeURIComponent(msg);
+        getRedirectUrl(CONFIG.PATHS.CANCEL) +
+        "?msg=" +
+        encodeURIComponent(advanceMsg || "결제가 취소/실패했습니다.");
     }
   };
 
-  // ----------------------------
-  // /shop_payment
-  // ----------------------------
+  // ---------------- shop_payment ----------------
   function handleShopPayment() {
     console.log(LOG_PREFIX + "Routing: Order Info Page");
 
-    function saveState(source, overrideMethod) {
-      const itemNameEl =
-        document.querySelector(".css-a0a2v3") || document.querySelector("._product_name");
-      const qtyEl =
-        document.querySelector(".css-15fzge") || document.querySelector("._product_qty");
+    function updatePaymentState(method, depositorArea, depositorInput) {
+      // method: CREDIT / BANK
+      localStorage.setItem("payMethod", method === "CREDIT" ? "CreditCard" : "BankTransfer");
 
-      const itemName = itemNameEl ? itemNameEl.innerText.trim() : "상품";
-      const qty = qtyEl ? qtyEl.innerText.replace(/[^0-9]/g, "") : "1";
-      const amount = getAmountSmart();
-
-      const method = overrideMethod
-        ? overrideMethod
-        : (localStorage.getItem("payMethod") === "CreditCard" ? "CREDIT" : "BANK");
-
-      const data = {
-        orderNo: getURLParam("order_no") || ("ORD-" + Date.now()),
-        amount,
-        itemName,
-        qty,
-        method,
-        savedAt: Date.now(),
-        source,
-      };
-
-      localStorage.setItem("fintree_pay_data", JSON.stringify(data));
-      console.log(LOG_PREFIX + "Saved fintree_pay_data:", data);
-      return data;
+      // 카드결제면 무통장 영역 완전 숨김 + validation 통과용 입금자명 채움
+      if (depositorArea) {
+        if (method === "CREDIT") {
+          depositorArea.style.display = "none";
+          if (depositorInput) depositorInput.value = "카드결제";
+        } else {
+          depositorArea.style.display = "block";
+          if (depositorInput && depositorInput.value === "카드결제") depositorInput.value = "";
+        }
+      } else if (depositorInput) {
+        depositorInput.style.display = method === "CREDIT" ? "none" : "block";
+        if (method === "CREDIT") depositorInput.value = "카드결제";
+      }
     }
 
-    // 버튼 UI 주입(기존 구조 유지)
-    function injectUI() {
+    function injectCustomPaymentUI() {
       const checkInterval = setInterval(() => {
-        const headers = Array.from(
-          document.querySelectorAll("header, h2, h3, .title, .css-17g8nhj")
-        );
-        const paymentHeader = headers.find((h) => h.innerText.includes("결제수단"));
+        // "결제수단" 헤더 찾기
+        const headers = Array.from(document.querySelectorAll("header, h2, h3, .title, .css-17g8nhj"));
+        const paymentHeader = headers.find((h) => (h.innerText || "").includes("결제수단"));
         if (!paymentHeader) return;
 
         const paymentSection =
@@ -338,63 +335,179 @@
           return;
         }
 
-        const custom = document.createElement("div");
-        custom.className = "pay-method-custom";
-        custom.innerHTML = `
+        // 무통장 라디오 (OPM01) 찾기
+        const radios = Array.from(document.querySelectorAll('input[type="radio"]'));
+        const bankRadio = radios.find((r) => r.value && r.value.includes("OPM01"));
+        if (!bankRadio) return;
+
+        // 무통장 라디오 강제 선택(주문 생성 흐름 유지)
+        if (!bankRadio.checked) bankRadio.click();
+
+        // 무통장 입력/계좌 영역 블록 찾기
+        let depositorBlock = document.querySelector(".css-1hw29i9");
+        if (!depositorBlock) {
+          const input = document.querySelector('input[placeholder*="입금자명"]') || document.querySelector('input[name="depositor"]');
+          if (input) depositorBlock = input.closest("div");
+        }
+
+        console.log(LOG_PREFIX + "Depositor Block found:", depositorBlock);
+
+        // 커스텀 UI
+        const customUI = document.createElement("div");
+        customUI.className = "pay-method-custom";
+        customUI.innerHTML = `
           <style>
-            .pay-method-custom{display:flex; flex-direction:column; gap:12px; margin:12px 0;}
-            .pay-method-buttons{display:flex; gap:10px;}
-            .pay-method-custom button{flex:1; padding:14px; border:1px solid #ddd; border-radius:10px; background:#fff; font-weight:700;}
-            .pay-method-custom button.active{background:#333; color:#fff; border-color:#333;}
-            .pay-guide-text{font-size:13px; color:#666; line-height:1.5;}
+            .pay-method-custom { display: flex; flex-direction: column; gap: 15px; margin: 15px 0; }
+            .pay-method-buttons { display: flex; gap: 10px; }
+            .pay-method-custom button {
+              flex: 1; padding: 15px; border: 1px solid #ddd; border-radius: 8px;
+              background: #fff; font-weight: bold; cursor: pointer; font-size: 16px;
+            }
+            .pay-method-custom button.active {
+              border-color: #333; background: #333; color: #fff;
+            }
+            .pay-guide-text { font-size: 13px; color: #666; margin-bottom: 5px; line-height: 1.5; }
+            .moved-depositor-block { margin-top: 10px; padding: 10px; border: 1px solid #eee; border-radius: 6px; background: #fafafa; }
           </style>
           <div class="pay-guide-text">
-            * 아래 버튼을 눌러 결제수단을 선택해주세요.
+            * 아래 버튼을 눌러 결제수단을 선택해주세요.<br>
+            * 카드결제 오류 시 고객센터로 문의해주세요.
           </div>
           <div class="pay-method-buttons">
             <button type="button" data-method="CREDIT" class="active">💳 카드결제</button>
             <button type="button" data-method="BANK">🏦 무통장입금</button>
           </div>
+          <div id="fnt-depositor-area"></div>
         `;
-        paymentHeader.insertAdjacentElement("afterend", custom);
 
-        const btns = custom.querySelectorAll("button");
-        btns.forEach((b) => {
-          b.addEventListener("click", (e) => {
-            btns.forEach(x => x.classList.remove("active"));
-            e.target.classList.add("active");
+        paymentHeader.insertAdjacentElement("afterend", customUI);
 
-            const m = e.target.getAttribute("data-method");
-            localStorage.setItem("payMethod", m === "CREDIT" ? "CreditCard" : "BankTransfer");
-            saveState("PayMethod Click", m);
+        const depositorArea = customUI.querySelector("#fnt-depositor-area");
+        if (depositorBlock && depositorArea) {
+          depositorBlock.classList.add("moved-depositor-block");
+          depositorArea.appendChild(depositorBlock);
+        }
+
+        // 기존 fieldset 숨김
+        const fieldset = bankRadio.closest("fieldset");
+        if (fieldset) fieldset.style.display = "none";
+
+        // moved 블록 안에서 입금자명 input 찾기
+        const depositorInput =
+          (customUI.querySelector('input[placeholder*="입금자명"]') ||
+            customUI.querySelector('input[name="depositor"]') ||
+            (depositorBlock ? depositorBlock.querySelector('input[placeholder*="입금자명"], input[name="depositor"]') : null));
+
+        // 초기: 카드결제 -> 무통장 영역 숨김
+        updatePaymentState("CREDIT", depositorArea, depositorInput);
+
+        // 버튼 클릭
+        const buttons = customUI.querySelectorAll("button[data-method]");
+        buttons.forEach((btn) => {
+          btn.addEventListener("click", (e) => {
+            const method = btn.getAttribute("data-method");
+            buttons.forEach((b) => b.classList.remove("active"));
+            btn.classList.add("active");
+            console.log(LOG_PREFIX + "Payment method selected:", method);
+            updatePaymentState(method, depositorArea, depositorInput);
+
+            // 선택 즉시 상태 저장(특히 amount)
+            saveCurrentState("Method Click", method);
           });
         });
 
+        console.log(LOG_PREFIX + "Custom Payment UI Injected");
         clearInterval(checkInterval);
-      }, 500);
+      }, 400);
     }
 
+    function saveCurrentState(source = "Manual", overrideMethod = null) {
+      // 주문자 정보 (기존 input이 있으면 사용)
+      let ordererName = document.querySelector('input[name="ordererName"]')?.value || "";
+      let ordererTel = document.querySelector('input[name="ordererCall"]')?.value || "";
+      let ordererEmail = document.querySelector('input[name="ordererEmail"]')?.value || "";
+
+      // 상품명/수량
+      const itemNameEl = document.querySelector(".css-a0a2v3") || document.querySelector("._product_name");
+      const qtyEl = document.querySelector(".css-15fzge") || document.querySelector("._product_qty");
+
+      const itemName = itemNameEl ? (itemNameEl.innerText || "").trim() : "상품";
+      const qty = qtyEl ? (qtyEl.innerText || "").replace(/[^0-9]/g, "") : "1";
+
+      // ★ 핵심: 금액 강력 추출
+      const amountNum = extractAmountStrong();
+      console.log(LOG_PREFIX + "Amount from selector/dataLayer/text scan:", amountNum);
+
+      let method = overrideMethod;
+      if (!method) {
+        const uiState = localStorage.getItem("payMethod");
+        if (uiState === "CreditCard") method = "CREDIT";
+        else if (uiState === "BankTransfer") method = "BANK";
+        else method = "BANK";
+      }
+
+      const urlOrderNo = getURLParam("order_no");
+      const paymentData = {
+        orderNo: urlOrderNo || "ORD-" + new Date().getTime(),
+        amount: String(amountNum || 0),
+        userName: ordererName,
+        userTel: ordererTel,
+        userEmail: ordererEmail,
+        itemName: itemName,
+        qty: qty || "1",
+        method: method,
+      };
+
+      localStorage.setItem("fintree_pay_data", JSON.stringify(paymentData));
+      console.log(LOG_PREFIX + `Saved fintree_pay_data [${source}]`, paymentData);
+
+      return paymentData;
+    }
+
+    // 결제하기 버튼 클릭 전/후로 계속 저장 (금액이 늦게 렌더링되는 케이스 대응)
     window.addEventListener("load", function () {
-      injectUI();
+      if (document.readyState !== "complete") return;
 
-      // 결제하기 버튼 눌릴 때 저장
-      document.addEventListener("click", function (e) {
-        const btn = e.target.closest('button[type="submit"], ._btn_payment, .css-1tf84sl, .css-clap0e');
-        if (btn && btn.innerText.includes("결제하기")) {
-          saveState("Before Submit");
+      // 초기에 한 번 저장
+      saveCurrentState("Initial Load");
+
+      // 주기 저장(금액 늦게 나오는 페이지 대응)
+      const timer = setInterval(() => {
+        if (!pathMatches(CONFIG.PATHS.INFO)) {
+          clearInterval(timer);
+          return;
         }
-      }, true);
+        saveCurrentState("Timer");
+      }, 1200);
 
-      // 주기 저장
-      setInterval(() => {
-        if (pathMatches(CONFIG.PATHS.INFO)) saveState("Heartbeat");
-      }, 1500);
+      // 결제하기 클릭 잡기
+      document.addEventListener(
+        "click",
+        function (e) {
+          const btn = e.target.closest(
+            'button[type="submit"], ._btn_payment, .css-1tf84sl, .css-clap0e'
+          );
+          if (btn && (btn.innerText || "").includes("결제하기")) {
+            // 클릭 시점에 최종 저장(중요)
+            const uiState = localStorage.getItem("payMethod");
+            const chosen = uiState === "CreditCard" ? "CREDIT" : "BANK";
+            saveCurrentState("Pay Button Click", chosen);
+            console.log(LOG_PREFIX + "결제하기 클릭 -> 주문 생성 진행(아임웹 흐름 유지)");
+            return true;
+          }
+        },
+        true
+      );
     });
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", injectCustomPaymentUI);
+    } else {
+      injectCustomPaymentUI();
+    }
   }
 
-  // ----------------------------
-  // /shop_payment_complete
-  // ----------------------------
+  // ---------------- shop_payment_complete ----------------
   function handleShopPaymentComplete() {
     console.log(LOG_PREFIX + "Routing: Auth/Confirmation Page");
 
@@ -404,68 +517,61 @@
         stored = JSON.parse(localStorage.getItem("fintree_pay_data"));
       } catch (e) {}
 
-      const trackId = getURLParam("order_no") || (stored ? stored.orderNo : "");
-      let amount = (stored && stored.amount) ? String(stored.amount) : "0";
+      const urlOrderNo = getURLParam("order_no");
 
-      // ✅ 여기서 강제 재추출 (네 콘솔의 1040000 JPY를 잡는 핵심)
-      if (!amount || amount === "0") {
-        amount = getAmountSmart();
-        console.log(LOG_PREFIX + "Amount recovered on complete page =>", amount);
+      // amount 최종 확정: stored 우선, 0이면 이 페이지에서 다시 강력추출
+      let amountNum = stored ? parseAmountNumber(stored.amount) : 0;
+      if (!amountNum || amountNum <= 0) {
+        const recovered = extractAmountStrong();
+        console.log(LOG_PREFIX + "Amount recovered on complete page =>", recovered);
+        amountNum = recovered;
       }
 
-      // itemName
-      let itemName = stored && stored.itemName ? stored.itemName : "상품";
-      let qty = stored && stored.qty ? parseInt(stored.qty, 10) : 1;
-      if (itemName.length > 20) itemName = itemName.slice(0, 20) + "...";
-      itemName = itemName + (qty > 1 ? ` 외 ${qty - 1}건` : "");
-
       const params = {
-        trackId,
-        amount,
-        userName: (stored && stored.userName) ? stored.userName : "",
-        userTel: (stored && stored.userTel) ? stored.userTel : "",
-        userEmail: (stored && stored.userEmail) ? stored.userEmail : "",
-        itemName,
+        trackId: urlOrderNo || (stored && stored.orderNo) || "",
+        amount: String(amountNum || 0),
+        userName: (stored && stored.userName) || "",
+        userTel: (stored && stored.userTel) || "",
+        userEmail: (stored && stored.userEmail) || "",
+        itemName: (stored && stored.itemName) || "상품",
       };
 
       console.log(LOG_PREFIX + "Final params:", params);
 
-      if (!params.amount || String(params.amount) === "0") {
+      // amount=0이면 결제 막고 안내
+      if (!amountNum || amountNum <= 0) {
         alert(
-          "결제금액을 읽지 못해서 결제를 진행할 수 없습니다. (amount=0)\n" +
-          "콘솔에 찍힌 'Amount from selector / dataLayer / text scan' 로그 캡처를 보내주세요."
+          `${location.hostname} 내용:\n\n결제금액을 읽지 못해서 결제를 진행할 수 없습니다. (amount=0)\n` +
+            `이 페이지(/shop_payment_complete)에서도 금액을 못 잡았습니다.\n` +
+            `콘솔 로그에서 "Amount recovered" 줄 캡처를 보내주세요.`
         );
         console.error(LOG_PREFIX + "Blocked: amount=0", params);
         return;
       }
 
-      // CREDIT 의도면 자동 실행
-      const intent = stored && stored.method ? stored.method : "BANK";
-      if (intent === "CREDIT") {
+      // 카드결제 의도면 자동 실행
+      if (stored && stored.method === "CREDIT") {
+        console.log(LOG_PREFIX + "CREDIT intent detected -> open payment layer now");
         createLoadingOverlay();
         executePay(params);
       } else {
-        console.log(LOG_PREFIX + "Not CREDIT intent. (BANK flow)");
+        console.log(LOG_PREFIX + "BANK intent or no stored intent -> do nothing");
       }
     });
   }
 
-  // ----------------------------
-  // /payment-success
-  // ----------------------------
+  // ---------------- success / cancel / refund ----------------
   function handlePaymentSuccess() {
     console.log(LOG_PREFIX + "Routing: Result Page");
   }
-
   function handlePaymentCancel() {
     console.log(LOG_PREFIX + "Routing: Cancel Page");
   }
-
   function handlePaymentRefund() {
     console.log(LOG_PREFIX + "Routing: Refund Page");
   }
 
-  // Router
+  // ---------------- Router ----------------
   function initRouter() {
     if (pathMatches(CONFIG.PATHS.INFO)) handleShopPayment();
     else if (pathMatches(CONFIG.PATHS.CONFIRM)) handleShopPaymentComplete();
