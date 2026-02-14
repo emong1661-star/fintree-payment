@@ -357,8 +357,10 @@
           });
         });
 
-        // Initial = CREDIT
-        setActive("CREDIT");
+       // Initial = BANK
+localStorage.setItem("payMethod", "BankTransfer");
+setActive("BANK");
+
 
         console.log(LOG_PREFIX + "Custom Payment UI injected");
         clearInterval(timer);
@@ -510,4 +512,5 @@
     initRouter();
   }
 })();
+
 
