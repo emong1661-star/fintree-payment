@@ -19,6 +19,8 @@
     "ptsrep.shop",
     "vjvprxmxkqsnjdl1.imweb.me",
     "ptwrep.shop",
+    "shoes2024box9244.imweb.me",
+    "tripleshopping.shop",
     "localhost",
     "127.0.0.1",
     "bagdown-payment.netlify.app",
@@ -508,3 +510,4 @@
     initRouter();
   }
 })();
+
