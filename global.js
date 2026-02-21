@@ -21,7 +21,7 @@
     "ptwrep.shop",
     "shoes2024box9244.imweb.me",
     "tripleshopping.shop",
-    "shoes2024box9244.imweb.me",
+    "ahsxpffjrtm.imweb.me",
     "xn--wl2b73c5ykxyp.shop",
     "localhost",
     "127.0.0.1",
@@ -514,6 +514,7 @@ setActive("BANK");
     initRouter();
   }
 })();
+
 
 
 
