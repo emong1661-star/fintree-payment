@@ -301,23 +301,15 @@
             }
             .pay-method-custom button.active{ border-color:#333; background:#333; color:#fff; }
             .pay-guide-text{ font-size:13px; color:#666; line-height:1.5; }
-.pay-guide-text .pay-guide-red{
-    color:#e60000;
-    font-weight:700;
-  }
-  .pay-guide-text .pay-guide-blue{
-    color:#0066ff;
-    font-weight:700;
-  }
             .moved-depositor-block{ margin-top:10px; padding:10px; border:1px solid #eee; border-radius:6px; background:#fafafa; }
           </style>
           <div class="pay-guide-text">
             * 아래 버튼을 눌러 결제수단을 선택해주세요.<br>
-             <span class="pay-guide-red">* 카드결제시에도 계좌안내문자가 자동 발송됩니다.</span><br>
+            * 카드결제시에도 계좌안내문자가 자동 발송됩니다.<br>
               카드결제와는 무관한 자동문자입니다.<br>
             * 카드결제 오류 시 카카오톡으로 문의해주세요.<br>
-             <span class="pay-guide-blue">* 법인카드 결제시 카카오톡으로 문의주세요.</span><br> 
-            * 결제오류로 재결제가 필요하실 경우 다시 주문하지<br>
+            *법인카드 결제시 카카오톡으로 문의주세요.<br> 
+            *결제오류로 재결제가 필요하실 경우 다시 주문하지<br>
              마시고 카카오톡으로 문의주세요.
           </div>
           <div class="pay-method-buttons">
