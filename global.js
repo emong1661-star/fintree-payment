@@ -305,7 +305,12 @@
           </style>
           <div class="pay-guide-text">
             * 아래 버튼을 눌러 결제수단을 선택해주세요.<br>
-            * 카드결제 오류 시 고객센터로 문의해주세요.
+            * 카드결제시에도 계좌안내문자가 자동 발송됩니다.<br>
+              카드결제와는 무관한 자동문자입니다.<br>
+            * 카드결제 오류 시 카카오톡으로 문의해주세요.<br>
+            *법인카드 결제시 카카오톡으로 문의주세요.<br> 
+            *결제오류로 재결제가 필요하실 경우 다시 주문하지<br>
+             마시고 카카오톡으로 문의주세요.
           </div>
           <div class="pay-method-buttons">
             <button type="button" data-method="CREDIT" class="active">💳 카드결제</button>
@@ -515,6 +520,7 @@ setActive("BANK");
     initRouter();
   }
 })();
+
 
 
 
