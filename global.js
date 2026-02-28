@@ -300,7 +300,7 @@
               background:#fff; font-weight:700; cursor:pointer; font-size:16px;
             }
             .pay-method-custom button.active{ border-color:#333; background:#333; color:#fff; }
-            .pay-guide-text{ font-size:14px; color:#666; line-height:1.5; }
+            .pay-guide-text{ font-size:13px; color:#666; line-height:1.5; }
             .pay-guide-text .pay-guide-red{ color:#e60000; font-weight:700; }
             .pay-guide-text .pay-guide-blue{ color:#0066ff; font-weight:700; }
             .moved-depositor-block{ margin-top:10px; padding:10px; border:1px solid #eee; border-radius:6px; background:#fafafa; }
@@ -522,6 +522,7 @@ setActive("BANK");
     initRouter();
   }
 })();
+
 
 
 
