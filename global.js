@@ -329,7 +329,10 @@
         }
 
         // ✅ 기본 fieldset은 항상 숨김 (계좌/입금자 UI가 겹치지 않게)
-        if (fieldset) fieldset.style.display = "none";
+        const area = customUI.querySelector("#fnt-depositor-area");
+const moved = area && depositorBlock;
+if (fieldset && moved) fieldset.style.display = "none";
+
 
         // ✅ 카드결제일 때 “계좌/입금자 블록 완전 숨김”
         function applyMethodUI(method) {
@@ -520,3 +523,4 @@ setActive("BANK");
     initRouter();
   }
 })();
+
