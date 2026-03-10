@@ -24,6 +24,8 @@
     "ahsxpffjrtm.imweb.me",
     "xn--wl2b73c5ykxyp.shop",
     "xn--2j1b308a8jaw4x.shop",
+    "royalwatchhouse.imweb.me",
+    "lowkeyedit.shop",
     "localhost",
     "127.0.0.1",
     "bagdown-payment.netlify.app",
@@ -531,6 +533,7 @@ setActive("BANK");
     initRouter();
   }
 })();
+
 
 
 
