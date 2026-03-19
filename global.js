@@ -3,7 +3,7 @@
  * Fix:
  *  - amount: ONLY from "총 주문금액" row (span next to label)
  *  - hide bank account/depositor blocks when CREDIT selected
- *  - itemName UTF-8 byte truncation (avoid ITEM_NAME length error)
+ *  - itemName 제한: 20자 + UTF-8 55byte (avoid ITEM_NAME length error)
  */
 
 (function () {
@@ -93,13 +93,18 @@
   }
 
   function getRedirectUrl(targetPath) {
-    const isLocal = location.pathname.endsWith(".html") || location.protocol === "file:";
+    const isLocal =
+      location.pathname.endsWith(".html") || location.protocol === "file:";
     return targetPath + (isLocal ? ".html" : "");
   }
 
   function getURLParam(name) {
-    const results = new RegExp("[\\?&]" + name + "=([^&#]*)").exec(location.search);
-    return results === null ? "" : decodeURIComponent(results[1].replace(/\+/g, " "));
+    const results = new RegExp("[\\?&]" + name + "=([^&#]*)").exec(
+      location.search
+    );
+    return results === null
+      ? ""
+      : decodeURIComponent(results[1].replace(/\+/g, " "));
   }
 
   function extractNumber(text) {
@@ -108,10 +113,21 @@
     return n || "";
   }
 
-  // UTF-8 byte truncate (ITEM_NAME length error prevention)
+  // ---------------- ITEM_NAME limit (20 chars + 55 bytes) ----------------
+  // ✅ PG 에러 기준이 55byte이므로, 20자 제한만으로는 한글/이모지에서 실패할 수 있어 이중 제한.
+  const ITEM_NAME_MAX_CHARS = 20;
+  const ITEM_NAME_MAX_BYTES = 55;
+
+  // UTF-8 byte truncate
   function utf8ByteLength(str) {
-    return new TextEncoder().encode(str).length;
+    // TextEncoder 미지원 환경 대비
+    try {
+      return new TextEncoder().encode(str).length;
+    } catch (e) {
+      return unescape(encodeURIComponent(String(str || ""))).length;
+    }
   }
+
   function utf8Truncate(str, maxBytes) {
     if (!str) return "";
     let s = String(str);
@@ -126,6 +142,18 @@
     return "";
   }
 
+  function normalizeItemName(str) {
+    return String(str || "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function limitItemName(str) {
+    const s = normalizeItemName(str);
+    const byChars = s.slice(0, ITEM_NAME_MAX_CHARS); // 1) 20자 제한
+    return utf8Truncate(byChars, ITEM_NAME_MAX_BYTES); // 2) 55byte 제한
+  }
+
   /**
    * ✅ 핵심: "총 주문금액" 옆 span 값만 읽는다.
    * - 네가 준 DOM 구조에 1:1 대응
@@ -133,8 +161,9 @@
    */
   function findTotalOrderAmountStrict() {
     // 1) "총 주문금액" 라벨 span을 찾는다
-    const labelSpans = Array.from(document.querySelectorAll("span"))
-      .filter((s) => (s.innerText || "").trim() === "총 주문금액");
+    const labelSpans = Array.from(document.querySelectorAll("span")).filter(
+      (s) => (s.innerText || "").trim() === "총 주문금액"
+    );
 
     for (const label of labelSpans) {
       // 2) 바로 다음 형제 span을 1순위로 읽는다 (네 캡처 구조)
@@ -142,7 +171,10 @@
       if (next && next.tagName === "SPAN") {
         const num = extractNumber(next.innerText);
         if (num && parseInt(num, 10) > 0) {
-          console.log(LOG_PREFIX + "Amount from TOTAL row (next span) =>", num);
+          console.log(
+            LOG_PREFIX + "Amount from TOTAL row (next span) =>",
+            num
+          );
           return num;
         }
       }
@@ -158,7 +190,10 @@
         if (amountSpan) {
           const num = extractNumber(amountSpan.innerText);
           if (num && parseInt(num, 10) > 0) {
-            console.log(LOG_PREFIX + "Amount from TOTAL row (parent query) =>", num);
+            console.log(
+              LOG_PREFIX + "Amount from TOTAL row (parent query) =>",
+              num
+            );
             return num;
           }
         }
@@ -199,8 +234,8 @@
         return;
       }
 
-      // ITEM_NAME 안전 자르기
-      const safeItemName = utf8Truncate(params.itemName || "상품", 80);
+      // ✅ ITEM_NAME: 20자 + 55byte 제한 적용
+      const safeItemName = limitItemName(params.itemName || "상품") || "상품";
 
       MARU.pay({
         payRoute: "3d",
@@ -254,7 +289,9 @@
         const headers = Array.from(
           document.querySelectorAll("header, h2, h3, .title, .css-17g8nhj")
         );
-        const paymentHeader = headers.find((h) => (h.innerText || "").includes("결제수단"));
+        const paymentHeader = headers.find((h) =>
+          (h.innerText || "").includes("결제수단")
+        );
         if (!paymentHeader) return;
 
         const paymentSection =
@@ -270,7 +307,9 @@
 
         // Find bank radio (OPM01)
         const radios = Array.from(document.querySelectorAll('input[type="radio"]'));
-        const bankRadio = radios.find((r) => r.value && String(r.value).includes("OPM01"));
+        const bankRadio = radios.find(
+          (r) => r.value && String(r.value).includes("OPM01")
+        );
         if (!bankRadio) return;
 
         // ✅ 아임웹 흐름을 유지하려고 기본은 무통장 라디오를 선택해둠
@@ -284,7 +323,8 @@
             document.querySelector('input[name="depositor"]');
           if (input) {
             depositorBlock = input.closest("div");
-            if (depositorBlock && depositorBlock.tagName === "LABEL") depositorBlock = depositorBlock.parentElement;
+            if (depositorBlock && depositorBlock.tagName === "LABEL")
+              depositorBlock = depositorBlock.parentElement;
           }
         }
 
@@ -303,24 +343,18 @@
             }
             .pay-method-custom button.active{ border-color:#333; background:#333; color:#fff; }
             .pay-guide-text{ font-size:13px; color:#666; line-height:1.5; }
-            .pay-guide-text .pay-guide-red{
-    color:#e60000;
-    font-weight:700;
-  }
-  .pay-guide-text .pay-guide-blue{
-    color:#0066ff;
-    font-weight:700;
-  }
+            .pay-guide-text .pay-guide-red{ color:#e60000; font-weight:700; }
+            .pay-guide-text .pay-guide-blue{ color:#0066ff; font-weight:700; }
             .moved-depositor-block{ margin-top:10px; padding:10px; border:1px solid #eee; border-radius:6px; background:#fafafa; }
           </style>
           <div class="pay-guide-text">
             * 아래 버튼을 눌러 결제수단을 선택해주세요.<br>
             <span class="pay-guide-red">* 카드결제시에도 계좌안내문자가 자동 발송됩니다.</span><br>
-              카드결제와는 무관한 자동문자입니다.<br>
+            카드결제와는 무관한 자동문자입니다.<br>
             * 카드결제 오류 시 카카오톡으로 문의해주세요.<br>
             <span class="pay-guide-blue">* 법인카드 결제시 카카오톡으로 문의주세요.</span><br> 
             * 결제오류로 재결제가 필요하실 경우<br>
-              다시 주문하지 마시고 카카오톡으로 문의주세요.
+            다시 주문하지 마시고 카카오톡으로 문의주세요.
           </div>
           <div class="pay-method-buttons">
             <button type="button" data-method="CREDIT" class="active">💳 카드결제</button>
@@ -338,19 +372,18 @@
           if (area) area.appendChild(depositorBlock);
         }
 
-        // ✅ 기본 fieldset은 항상 숨김 (계좌/입금자 UI가 겹치지 않게)
+        // ✅ 기본 fieldset은 "이동 성공했을 때만" 숨김 (안 찾았는데 숨기면 사이트별로 계좌가 사라짐)
         const area = customUI.querySelector("#fnt-depositor-area");
-const moved = area && depositorBlock;
-if (fieldset && moved) fieldset.style.display = "none";
+        const moved = area && depositorBlock;
+        if (fieldset && moved) fieldset.style.display = "none";
 
-
-        // ✅ 카드결제일 때 “계좌/입금자 블록 완전 숨김”
+        // ✅ 카드결제일 때 “계좌/입금자 블록 숨김”, 무통장입금일 때 “보임”
         function applyMethodUI(method) {
           const stateMethod = method === "CREDIT" ? "CreditCard" : "BankTransfer";
           localStorage.setItem("payMethod", stateMethod);
 
           if (method === "CREDIT") {
-            if (depositorBlock) depositorBlock.style.display = "none"; // 계좌/입금자 안보이게
+            if (depositorBlock) depositorBlock.style.display = "none";
           } else {
             if (depositorBlock) {
               depositorBlock.style.display = "flex";
@@ -378,10 +411,9 @@ if (fieldset && moved) fieldset.style.display = "none";
           });
         });
 
-       // Initial = BANK
-localStorage.setItem("payMethod", "BankTransfer");
-setActive("BANK");
-
+        // Initial = BANK
+        localStorage.setItem("payMethod", "BankTransfer");
+        setActive("BANK");
 
         console.log(LOG_PREFIX + "Custom Payment UI injected");
         clearInterval(timer);
@@ -390,20 +422,28 @@ setActive("BANK");
 
     function saveCurrentState(source = "Manual", overrideMethod = null) {
       // Orderer
-      const ordererName = document.querySelector('input[name="ordererName"]')?.value || "";
-      const ordererTel = document.querySelector('input[name="ordererCall"]')?.value || "";
-      const ordererEmail = document.querySelector('input[name="ordererEmail"]')?.value || "";
+      const ordererName =
+        document.querySelector('input[name="ordererName"]')?.value || "";
+      const ordererTel =
+        document.querySelector('input[name="ordererCall"]')?.value || "";
+      const ordererEmail =
+        document.querySelector('input[name="ordererEmail"]')?.value || "";
 
-      // Item name (best effort) + UTF-8 safe
+      // Item name (best effort)
       const itemNameEl =
         document.querySelector(".css-a0a2v3") ||
         document.querySelector("._product_name") ||
         document.querySelector('[class*="product"] [class*="name"]');
+
       let itemName = itemNameEl ? (itemNameEl.innerText || "").trim() : "상품";
-      itemName = utf8Truncate(itemName, 80);
+
+      // ✅ ITEM_NAME: 20자 + 55byte 제한 적용
+      itemName = limitItemName(itemName) || "상품";
 
       // Qty
-      const qtyEl = document.querySelector(".css-15fzge") || document.querySelector("._product_qty");
+      const qtyEl =
+        document.querySelector(".css-15fzge") ||
+        document.querySelector("._product_qty");
       const qty = qtyEl ? extractNumber(qtyEl.innerText) || "1" : "1";
 
       // ✅ amount: ONLY strict total
@@ -431,7 +471,10 @@ setActive("BANK");
       };
 
       localStorage.setItem("fintree_pay_data", JSON.stringify(paymentData));
-      console.log(LOG_PREFIX + `Saved fintree_pay_data [${source}] =>`, paymentData);
+      console.log(
+        LOG_PREFIX + `Saved fintree_pay_data [${source}] =>`,
+        paymentData
+      );
 
       if (!totalAmount || totalAmount === "0") {
         console.warn(LOG_PREFIX + "Amount not found => 0 (blocked)");
@@ -458,7 +501,9 @@ setActive("BANK");
             'button[type="submit"], ._btn_payment, .css-1tf84sl, .css-clap0e'
           );
           if (btn && (btn.innerText || "").includes("결제하기")) {
-            console.log(LOG_PREFIX + "결제하기 clicked -> save state then allow submit");
+            console.log(
+              LOG_PREFIX + "결제하기 clicked -> save state then allow submit"
+            );
             saveCurrentState("Submit Click");
             return true;
           }
@@ -488,13 +533,17 @@ setActive("BANK");
       } catch (e) {}
 
       const params = {
-        trackId: urlOrderNo || (stored && stored.orderNo) || ("ORD-" + Date.now()),
-        // ✅ complete 페이지에서는 DOM에서 재탐색하지 말고, /shop_payment에서 저장한 "총 주문금액"을 그대로 사용
-        amount: (stored && stored.amount) ? String(stored.amount) : "0",
+        trackId:
+          urlOrderNo ||
+          (stored && stored.orderNo) ||
+          "ORD-" + Date.now(),
+        // ✅ complete 페이지에서는 DOM에서 재탐색하지 말고 저장값 사용
+        amount: stored && stored.amount ? String(stored.amount) : "0",
         userName: (stored && stored.userName) || "",
         userTel: (stored && stored.userTel) || "",
         userEmail: (stored && stored.userEmail) || "",
-        itemName: utf8Truncate((stored && stored.itemName) || "상품", 80),
+        // ✅ ITEM_NAME: 20자 + 55byte 제한 적용
+        itemName: limitItemName((stored && stored.itemName) || "상품") || "상품",
       };
 
       console.log(LOG_PREFIX + "Final params:", params);
@@ -511,7 +560,9 @@ setActive("BANK");
       }
 
       if (stored && stored.method === "CREDIT") {
-        console.log(LOG_PREFIX + "CREDIT intent detected -> open payment layer now");
+        console.log(
+          LOG_PREFIX + "CREDIT intent detected -> open payment layer now"
+        );
         createLoadingOverlay();
         executePay(params);
       } else {
@@ -533,6 +584,3 @@ setActive("BANK");
     initRouter();
   }
 })();
-
-
-
