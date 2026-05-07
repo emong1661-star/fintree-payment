@@ -4,10 +4,6 @@
  *  - amount: ONLY from "총 주문금액" row (span next to label)
  *  - hide bank account/depositor blocks when CREDIT selected
  *  - itemName 제한: 20자 + UTF-8 55byte (avoid ITEM_NAME length error)
- *  - ✅ 구매자명(userName) 항상 영수증에 표시되도록 강화
- *      · 다중 셀렉터 fallback
- *      · MARU.pay 다중 필드 매핑 (userName/buyerName/purchaserName/ordererName)
- *      · 비어있으면 결제 차단 + 안내
  */
 
 (function () {
@@ -118,10 +114,13 @@
   }
 
   // ---------------- ITEM_NAME limit (20 chars + 55 bytes) ----------------
+  // ✅ PG 에러 기준이 55byte이므로, 20자 제한만으로는 한글/이모지에서 실패할 수 있어 이중 제한.
   const ITEM_NAME_MAX_CHARS = 20;
   const ITEM_NAME_MAX_BYTES = 55;
 
+  // UTF-8 byte truncate
   function utf8ByteLength(str) {
+    // TextEncoder 미지원 환경 대비
     try {
       return new TextEncoder().encode(str).length;
     } catch (e) {
@@ -151,127 +150,23 @@
 
   function limitItemName(str) {
     const s = normalizeItemName(str);
-    const byChars = s.slice(0, ITEM_NAME_MAX_CHARS);
-    return utf8Truncate(byChars, ITEM_NAME_MAX_BYTES);
-  }
-
-  // ---------------- ✅ User Name Extractor (강화) ----------------
-  /**
-   * 다양한 셀렉터/위치에서 구매자명을 추출.
-   * 우선순위:
-   *  1) input[name="ordererName"]
-   *  2) input[id="ordererName"], data-field 등
-   *  3) placeholder에 "이름"/"성함" 포함된 input
-   *  4) 입금자명 input (depositor)
-   *  5) localStorage에 마지막으로 저장된 값
-   */
-  function extractUserName() {
-    const tryRead = (sel) => {
-      try {
-        const el = document.querySelector(sel);
-        if (el && el.value && String(el.value).trim()) {
-          return String(el.value).trim();
-        }
-      } catch (e) {}
-      return "";
-    };
-
-    // 1) 명시적 ordererName
-    let v =
-      tryRead('input[name="ordererName"]') ||
-      tryRead('input[id="ordererName"]') ||
-      tryRead('input[data-field="ordererName"]');
-    if (v) return v;
-
-    // 2) name 속성 부분일치
-    try {
-      const all = document.querySelectorAll('input[name*="orderer" i]');
-      for (const el of all) {
-        const nm = (el.getAttribute("name") || "").toLowerCase();
-        if (
-          (nm.includes("name") || nm.includes("이름") || nm.includes("성함")) &&
-          el.value &&
-          el.value.trim()
-        ) {
-          return el.value.trim();
-        }
-      }
-    } catch (e) {}
-
-    // 3) placeholder 기반
-    v =
-      tryRead('input[placeholder*="이름"]') ||
-      tryRead('input[placeholder*="성함"]') ||
-      tryRead('input[placeholder*="주문자"]');
-    if (v) return v;
-
-    // 4) 입금자명 fallback (무통장 입금자명을 구매자명으로 사용)
-    v =
-      tryRead('input[name="depositor"]') ||
-      tryRead('input[placeholder*="입금자"]');
-    if (v) return v;
-
-    // 5) localStorage 마지막값
-    try {
-      const stored = JSON.parse(localStorage.getItem("fintree_pay_data") || "{}");
-      if (stored && stored.userName && String(stored.userName).trim()) {
-        return String(stored.userName).trim();
-      }
-    } catch (e) {}
-
-    return "";
-  }
-
-  function extractUserTel() {
-    const tryRead = (sel) => {
-      try {
-        const el = document.querySelector(sel);
-        if (el && el.value && String(el.value).trim()) {
-          return String(el.value).trim();
-        }
-      } catch (e) {}
-      return "";
-    };
-
-    return (
-      tryRead('input[name="ordererCall"]') ||
-      tryRead('input[name="ordererTel"]') ||
-      tryRead('input[name*="orderer" i][name*="tel" i]') ||
-      tryRead('input[name*="orderer" i][name*="phone" i]') ||
-      tryRead('input[placeholder*="연락처"]') ||
-      tryRead('input[placeholder*="전화"]') ||
-      ""
-    );
-  }
-
-  function extractUserEmail() {
-    const tryRead = (sel) => {
-      try {
-        const el = document.querySelector(sel);
-        if (el && el.value && String(el.value).trim()) {
-          return String(el.value).trim();
-        }
-      } catch (e) {}
-      return "";
-    };
-
-    return (
-      tryRead('input[name="ordererEmail"]') ||
-      tryRead('input[type="email"]') ||
-      tryRead('input[placeholder*="이메일"]') ||
-      ""
-    );
+    const byChars = s.slice(0, ITEM_NAME_MAX_CHARS); // 1) 20자 제한
+    return utf8Truncate(byChars, ITEM_NAME_MAX_BYTES); // 2) 55byte 제한
   }
 
   /**
-   * ✅ "총 주문금액" 옆 span 값만 읽는다.
+   * ✅ 핵심: "총 주문금액" 옆 span 값만 읽는다.
+   * - 네가 준 DOM 구조에 1:1 대응
+   * - 배송비/상품가/할인가 절대 안 건드림
    */
   function findTotalOrderAmountStrict() {
+    // 1) "총 주문금액" 라벨 span을 찾는다
     const labelSpans = Array.from(document.querySelectorAll("span")).filter(
       (s) => (s.innerText || "").trim() === "총 주문금액"
     );
 
     for (const label of labelSpans) {
+      // 2) 바로 다음 형제 span을 1순위로 읽는다 (네 캡처 구조)
       const next = label.nextElementSibling;
       if (next && next.tagName === "SPAN") {
         const num = extractNumber(next.innerText);
@@ -284,6 +179,7 @@
         }
       }
 
+      // 3) 같은 부모 안에서 css-nxbuqh 같은 '금액용 span'을 찾는다
       const parent = label.parentElement;
       if (parent) {
         const amountSpan =
@@ -338,18 +234,8 @@
         return;
       }
 
+      // ✅ ITEM_NAME: 20자 + 55byte 제한 적용
       const safeItemName = limitItemName(params.itemName || "상품") || "상품";
-
-      // ✅ 구매자명 안전 처리 (공백 trim, 마지막 fallback "구매자")
-      const safeUserName =
-        String(params.userName || "").trim() ||
-        extractUserName() ||
-        "구매자";
-
-      const safeUserTel = String(params.userTel || "").trim();
-      const safeUserEmail = String(params.userEmail || "").trim();
-
-      console.log(LOG_PREFIX + "✅ Final userName for receipt:", safeUserName);
 
       MARU.pay({
         payRoute: "3d",
@@ -357,26 +243,11 @@
         publicKey: CONFIG.PUBLIC_KEY,
         trackId: params.trackId,
         amount: params.amount,
-        redirectUrl:
-          window.location.origin + getRedirectUrl(CONFIG.PATHS.SUCCESS),
+        redirectUrl: window.location.origin + getRedirectUrl(CONFIG.PATHS.SUCCESS),
         itemName: safeItemName,
-
-        // ✅ 구매자명 다중 필드 매핑 (PG/SDK 버전별 호환 — 영수증 PURCHASER 표시 보장)
-        userName: safeUserName,
-        buyerName: safeUserName,
-        purchaserName: safeUserName,
-        ordererName: safeUserName,
-        customerName: safeUserName,
-
-        // ✅ 연락처/이메일도 별칭 포함
-        userTel: safeUserTel,
-        buyerTel: safeUserTel,
-        ordererTel: safeUserTel,
-
-        userEmail: safeUserEmail,
-        buyerEmail: safeUserEmail,
-        ordererEmail: safeUserEmail,
-
+        userEmail: params.userEmail,
+        userName: params.userName,
+        userTel: params.userTel,
         mode: "layer",
         debugMode: "live",
       });
@@ -393,20 +264,14 @@
 
     if (resultCd === "0000") {
       const trackId =
-        data.pay && data.pay.trackId
-          ? data.pay.trackId
-          : getURLParam("order_no");
+        data.pay && data.pay.trackId ? data.pay.trackId : getURLParam("order_no");
       console.log(LOG_PREFIX + "Payment Success. Redirecting...");
       location.href =
         getRedirectUrl(CONFIG.PATHS.SUCCESS) +
         "?status=success&trackId=" +
         trackId;
     } else {
-      console.warn(
-        LOG_PREFIX + "Payment Failed/Cancelled:",
-        resultCd,
-        advanceMsg
-      );
+      console.warn(LOG_PREFIX + "Payment Failed/Cancelled:", resultCd, advanceMsg);
       location.href =
         getRedirectUrl(CONFIG.PATHS.CANCEL) +
         "?msg=" +
@@ -440,16 +305,17 @@
           return;
         }
 
-        const radios = Array.from(
-          document.querySelectorAll('input[type="radio"]')
-        );
+        // Find bank radio (OPM01)
+        const radios = Array.from(document.querySelectorAll('input[type="radio"]'));
         const bankRadio = radios.find(
           (r) => r.value && String(r.value).includes("OPM01")
         );
         if (!bankRadio) return;
 
+        // ✅ 아임웹 흐름을 유지하려고 기본은 무통장 라디오를 선택해둠
         if (!bankRadio.checked) bankRadio.click();
 
+        // Find depositor/account block
         let depositorBlock = document.querySelector(".css-1hw29i9");
         if (!depositorBlock) {
           const input =
@@ -462,6 +328,7 @@
           }
         }
 
+        // 기본 bank fieldset
         const fieldset = bankRadio.closest("fieldset");
 
         const customUI = document.createElement("div");
@@ -498,19 +365,21 @@
 
         paymentHeader.insertAdjacentElement("afterend", customUI);
 
+        // Move depositor block into custom UI
         if (depositorBlock) {
           depositorBlock.classList.add("moved-depositor-block");
           const area = customUI.querySelector("#fnt-depositor-area");
           if (area) area.appendChild(depositorBlock);
         }
 
+        // ✅ 기본 fieldset은 "이동 성공했을 때만" 숨김 (안 찾았는데 숨기면 사이트별로 계좌가 사라짐)
         const area = customUI.querySelector("#fnt-depositor-area");
         const moved = area && depositorBlock;
         if (fieldset && moved) fieldset.style.display = "none";
 
+        // ✅ 카드결제일 때 “계좌/입금자 블록 숨김”, 무통장입금일 때 “보임”
         function applyMethodUI(method) {
-          const stateMethod =
-            method === "CREDIT" ? "CreditCard" : "BankTransfer";
+          const stateMethod = method === "CREDIT" ? "CreditCard" : "BankTransfer";
           localStorage.setItem("payMethod", stateMethod);
 
           if (method === "CREDIT") {
@@ -524,6 +393,7 @@
           }
         }
 
+        // Bind buttons
         const buttons = customUI.querySelectorAll("button[data-method]");
         function setActive(method) {
           buttons.forEach((b) => b.classList.remove("active"));
@@ -541,6 +411,7 @@
           });
         });
 
+        // Initial = BANK
         localStorage.setItem("payMethod", "BankTransfer");
         setActive("BANK");
 
@@ -550,10 +421,13 @@
     }
 
     function saveCurrentState(source = "Manual", overrideMethod = null) {
-      // ✅ 강화된 추출기 사용
-      const ordererName = extractUserName();
-      const ordererTel = extractUserTel();
-      const ordererEmail = extractUserEmail();
+      // Orderer
+      const ordererName =
+        document.querySelector('input[name="ordererName"]')?.value || "";
+      const ordererTel =
+        document.querySelector('input[name="ordererCall"]')?.value || "";
+      const ordererEmail =
+        document.querySelector('input[name="ordererEmail"]')?.value || "";
 
       // Item name (best effort)
       const itemNameEl =
@@ -562,6 +436,8 @@
         document.querySelector('[class*="product"] [class*="name"]');
 
       let itemName = itemNameEl ? (itemNameEl.innerText || "").trim() : "상품";
+
+      // ✅ ITEM_NAME: 20자 + 55byte 제한 적용
       itemName = limitItemName(itemName) || "상품";
 
       // Qty
@@ -570,7 +446,7 @@
         document.querySelector("._product_qty");
       const qty = qtyEl ? extractNumber(qtyEl.innerText) || "1" : "1";
 
-      // Total amount
+      // ✅ amount: ONLY strict total
       const totalAmount = findTotalOrderAmountStrict();
 
       // Method
@@ -586,7 +462,7 @@
       const paymentData = {
         orderNo: urlOrderNo || "ORD-" + Date.now(),
         amount: totalAmount,
-        userName: ordererName, // ✅ 강화된 값
+        userName: ordererName,
         userTel: ordererTel,
         userEmail: ordererEmail,
         itemName: itemName,
@@ -600,15 +476,6 @@
         paymentData
       );
 
-      if (!ordererName) {
-        console.warn(
-          LOG_PREFIX +
-            "⚠️ userName이 비어있습니다. ordererName/depositor input을 찾지 못함"
-        );
-      } else {
-        console.log(LOG_PREFIX + "✅ userName 추출 성공:", ordererName);
-      }
-
       if (!totalAmount || totalAmount === "0") {
         console.warn(LOG_PREFIX + "Amount not found => 0 (blocked)");
       }
@@ -616,38 +483,12 @@
     }
 
     window.addEventListener("load", function () {
-      // 입력 변경 즉시 저장
-      const inputNames = [
-        "ordererName",
-        "ordererCall",
-        "ordererTel",
-        "ordererEmail",
-        "depositor",
-      ];
-      inputNames.forEach((name) => {
+      ["ordererName", "ordererCall", "ordererEmail"].forEach((name) => {
         const el = document.querySelector(`input[name="${name}"]`);
         if (el) el.addEventListener("input", () => saveCurrentState("Input"));
       });
 
-      // placeholder 기반 input도 감지 (이름/입금자명 등 동적 input)
-      document.addEventListener("input", function (e) {
-        const t = e.target;
-        if (!t || t.tagName !== "INPUT") return;
-        const ph = (t.getAttribute("placeholder") || "").toLowerCase();
-        if (
-          ph.includes("이름") ||
-          ph.includes("성함") ||
-          ph.includes("입금자") ||
-          ph.includes("연락처") ||
-          ph.includes("전화") ||
-          ph.includes("이메일") ||
-          ph.includes("주문자")
-        ) {
-          saveCurrentState("Input(placeholder)");
-        }
-      });
-
-      // Keep amount/userName fresh (DOM changes)
+      // Keep amount fresh (DOM changes)
       setInterval(() => {
         if (pathMatches(CONFIG.PATHS.INFO)) saveCurrentState("Timer");
       }, 1000);
@@ -663,20 +504,7 @@
             console.log(
               LOG_PREFIX + "결제하기 clicked -> save state then allow submit"
             );
-            const state = saveCurrentState("Submit Click");
-
-            // ✅ 구매자명이 비어있으면 결제 차단
-            if (!state.userName) {
-              e.preventDefault();
-              e.stopPropagation();
-              alert("구매자명(주문자 이름)을 입력해 주세요.");
-              const focusEl =
-                document.querySelector('input[name="ordererName"]') ||
-                document.querySelector('input[placeholder*="이름"]') ||
-                document.querySelector('input[placeholder*="성함"]');
-              if (focusEl) focusEl.focus();
-              return false;
-            }
+            saveCurrentState("Submit Click");
             return true;
           }
         },
@@ -704,27 +532,18 @@
         stored = JSON.parse(localStorage.getItem("fintree_pay_data"));
       } catch (e) {}
 
-      // ✅ complete 페이지에서도 한 번 더 추출 시도 (DOM에 주문자 정보 표시되는 경우 대응)
-      const liveUserName = extractUserName();
-      const liveUserTel = extractUserTel();
-      const liveUserEmail = extractUserEmail();
-
-      const finalUserName =
-        (stored && stored.userName && String(stored.userName).trim()) ||
-        liveUserName ||
-        "";
-
       const params = {
         trackId:
-          urlOrderNo || (stored && stored.orderNo) || "ORD-" + Date.now(),
+          urlOrderNo ||
+          (stored && stored.orderNo) ||
+          "ORD-" + Date.now(),
+        // ✅ complete 페이지에서는 DOM에서 재탐색하지 말고 저장값 사용
         amount: stored && stored.amount ? String(stored.amount) : "0",
-        userName: finalUserName,
-        userTel:
-          (stored && stored.userTel) || liveUserTel || "",
-        userEmail:
-          (stored && stored.userEmail) || liveUserEmail || "",
-        itemName:
-          limitItemName((stored && stored.itemName) || "상품") || "상품",
+        userName: (stored && stored.userName) || "",
+        userTel: (stored && stored.userTel) || "",
+        userEmail: (stored && stored.userEmail) || "",
+        // ✅ ITEM_NAME: 20자 + 55byte 제한 적용
+        itemName: limitItemName((stored && stored.itemName) || "상품") || "상품",
       };
 
       console.log(LOG_PREFIX + "Final params:", params);
@@ -737,20 +556,6 @@
             "F12 콘솔에서 'Amount from TOTAL row' 로그 캡처를 보내주세요."
         );
         console.error(LOG_PREFIX + "Blocked: amount=0", params);
-        return;
-      }
-
-      // ✅ 구매자명이 비어있으면 결제 차단 + 정보 입력 페이지로 복귀 안내
-      if (!params.userName) {
-        alert(
-          "구매자명(주문자 이름)이 비어 있어 결제를 진행할 수 없습니다.\n" +
-            "주문자 정보 입력 페이지에서 이름을 다시 확인해 주세요."
-        );
-        console.error(LOG_PREFIX + "Blocked: userName empty", params);
-        // 이전 페이지로 자동 복귀
-        try {
-          history.back();
-        } catch (e) {}
         return;
       }
 
