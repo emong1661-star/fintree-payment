@@ -12,7 +12,6 @@
   // --- Domain Restriction ---
   const ALLOWED_HOSTNAMES = [
     "qorekdnsqor1.imweb.me",
-    "apgjeong.com",
     "bagdown.shop",
     "kmcompany01.shop",
     "whggkqtycld1.imweb.me",
