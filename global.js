@@ -1,587 +1,359 @@
 /**
- * Fintree Payment Universal Script (Hosted)
- * Fix:
- *  - amount: ONLY from "총 주문금액" row (span next to label)
- *  - hide bank account/depositor blocks when CREDIT selected
- *  - itemName 제한: 20자 + UTF-8 55byte (avoid ITEM_NAME length error)
+ * Fintree Payment Universal Script (GNUBoard5 전용)
+ * 대상: 영카트5 / 그누보드5
+ * 특징:
+ * - 주문서(orderform.php) 구조 기준
+ * - 총 주문금액 ONLY 사용
+ * - 카드결제 / 무통장 UI 커스텀
+ * - itemName 20자 + 55byte 제한
+ * - orderformupdate.php 직전 실행
  */
 
 (function () {
-  const LOG_PREFIX = "[Fintree Netlify] ";
+  const LOG_PREFIX = "[Fintree G5] ";
 
-  // --- Domain Restriction ---
-  const ALLOWED_HOSTNAMES = [
-    "qorekdnsqor1.imweb.me",
-    "apgjeong.com",
-    "bagdown.shop",
-    "kmcompany01.shop",
-    "whggkqtycld1.imweb.me",
-    "vpvpexmxkqtb.imweb.me",
-    "ptsrep.shop",
-    "vjvprxmxkqsnjdl1.imweb.me",
-    "ptwrep.shop",
-    "shoes2024box9244.imweb.me",
-    "tripleshopping.shop",
-    "ahsxpffjrtm.imweb.me",
-    "xn--wl2b73c5ykxyp.shop",
-    "xn--2j1b308a8jaw4x.shop",
-    "royalwatchhouse.imweb.me",
-    "lowkeyedit.shop",
-    "localhost",
-    "127.0.0.1",
-    "bagdown-payment.netlify.app",
-  ];
-
-  if (
-    !ALLOWED_HOSTNAMES.includes(location.hostname) &&
-    !location.hostname.endsWith(".vercel.app") &&
-    !location.hostname.endsWith(".netlify.app")
-  ) {
-    console.warn(
-      LOG_PREFIX +
-        "Script execution blocked: Domain not allowed (" +
-        location.hostname +
-        ")"
-    );
-    return;
-  }
-
-  console.log(
-    LOG_PREFIX + "Initialized. Protocol:",
-    location.protocol,
-    "Path:",
-    location.pathname
-  );
-
-  // --- Hosted Domain Detect ---
-  let hostedDomain = "https://bagdown-payment.netlify.app";
-  try {
-    if (document.currentScript && document.currentScript.src) {
-      const scriptUrl = new URL(document.currentScript.src);
-      hostedDomain = scriptUrl.origin;
-    }
-  } catch (e) {
-    console.warn(
-      LOG_PREFIX + "Failed to detect hosted domain, using default:",
-      hostedDomain
-    );
-  }
+  // ---------------- CONFIG ----------------
 
   const CONFIG = {
     PUBLIC_KEY: "pk_1fc0-d72bd2-31f-a22a1",
     TID: "TMN009875",
-    VERIFY_API: "/api/verify",
-    HOSTED_DOMAIN: hostedDomain,
+
     PATHS: {
-      INFO: "/shop_payment",
-      CONFIRM: "/shop_payment_complete",
-      SUCCESS: "/payment-success",
-      CANCEL: "/payment-cancel",
-      REFUND: "/payment-refund",
+      ORDER: "/shop/orderform.php",
+      COMPLETE: "/shop/orderinquiryview.php",
+      SUCCESS: "/payment-success.php",
+      CANCEL: "/payment-cancel.php",
     },
   };
 
-  // ---------------- Utilities ----------------
-
-  function pathMatches(targetPath) {
-    const currentPath = location.pathname;
-    return (
-      currentPath === targetPath ||
-      currentPath === targetPath + ".html" ||
-      currentPath === targetPath + "/" ||
-      currentPath.endsWith(targetPath + ".html")
-    );
-  }
-
-  function getRedirectUrl(targetPath) {
-    const isLocal =
-      location.pathname.endsWith(".html") || location.protocol === "file:";
-    return targetPath + (isLocal ? ".html" : "");
-  }
-
-  function getURLParam(name) {
-    const results = new RegExp("[\\?&]" + name + "=([^&#]*)").exec(
-      location.search
-    );
-    return results === null
-      ? ""
-      : decodeURIComponent(results[1].replace(/\+/g, " "));
-  }
+  // ---------------- UTIL ----------------
 
   function extractNumber(text) {
-    if (!text) return "";
-    const n = String(text).replace(/[^\d]/g, "");
-    return n || "";
+    if (!text) return "0";
+    return String(text).replace(/[^\d]/g, "") || "0";
   }
 
-  // ---------------- ITEM_NAME limit (20 chars + 55 bytes) ----------------
-  // ✅ PG 에러 기준이 55byte이므로, 20자 제한만으로는 한글/이모지에서 실패할 수 있어 이중 제한.
-  const ITEM_NAME_MAX_CHARS = 20;
-  const ITEM_NAME_MAX_BYTES = 55;
-
-  // UTF-8 byte truncate
   function utf8ByteLength(str) {
-    // TextEncoder 미지원 환경 대비
     try {
       return new TextEncoder().encode(str).length;
     } catch (e) {
-      return unescape(encodeURIComponent(String(str || ""))).length;
+      return unescape(encodeURIComponent(str)).length;
     }
   }
 
   function utf8Truncate(str, maxBytes) {
-    if (!str) return "";
-    let s = String(str);
-    if (utf8ByteLength(s) <= maxBytes) return s;
+    let s = String(str || "");
 
-    let end = s.length;
-    while (end > 0) {
-      const candidate = s.slice(0, end);
-      if (utf8ByteLength(candidate) <= maxBytes) return candidate;
-      end--;
+    while (utf8ByteLength(s) > maxBytes) {
+      s = s.slice(0, -1);
     }
-    return "";
-  }
 
-  function normalizeItemName(str) {
-    return String(str || "")
-      .replace(/\s+/g, " ")
-      .trim();
+    return s;
   }
 
   function limitItemName(str) {
-    const s = normalizeItemName(str);
-    const byChars = s.slice(0, ITEM_NAME_MAX_CHARS); // 1) 20자 제한
-    return utf8Truncate(byChars, ITEM_NAME_MAX_BYTES); // 2) 55byte 제한
+    str = String(str || "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    str = str.slice(0, 20);
+
+    return utf8Truncate(str, 55);
   }
 
-  /**
-   * ✅ 핵심: "총 주문금액" 옆 span 값만 읽는다.
-   * - 네가 준 DOM 구조에 1:1 대응
-   * - 배송비/상품가/할인가 절대 안 건드림
-   */
-  function findTotalOrderAmountStrict() {
-    // 1) "총 주문금액" 라벨 span을 찾는다
-    const labelSpans = Array.from(document.querySelectorAll("span")).filter(
-      (s) => (s.innerText || "").trim() === "총 주문금액"
-    );
+  function pathIncludes(path) {
+    return location.pathname.indexOf(path) !== -1;
+  }
 
-    for (const label of labelSpans) {
-      // 2) 바로 다음 형제 span을 1순위로 읽는다 (네 캡처 구조)
-      const next = label.nextElementSibling;
-      if (next && next.tagName === "SPAN") {
-        const num = extractNumber(next.innerText);
-        if (num && parseInt(num, 10) > 0) {
-          console.log(
-            LOG_PREFIX + "Amount from TOTAL row (next span) =>",
-            num
-          );
-          return num;
-        }
-      }
+  // ---------------- 금액 찾기 ----------------
 
-      // 3) 같은 부모 안에서 css-nxbuqh 같은 '금액용 span'을 찾는다
-      const parent = label.parentElement;
-      if (parent) {
-        const amountSpan =
-          parent.querySelector("span.css-nxbuqh") ||
-          parent.querySelector('span[class*="nxbuqh"]') ||
-          parent.querySelector("span:last-child");
+  function getTotalAmount() {
+    // 영카트5 총 주문금액 영역
+    const selectors = [
+      "#od_tot_price",
+      ".tot_price .price",
+      ".order_total_price",
+      "#sc_price",
+    ];
 
-        if (amountSpan) {
-          const num = extractNumber(amountSpan.innerText);
-          if (num && parseInt(num, 10) > 0) {
-            console.log(
-              LOG_PREFIX + "Amount from TOTAL row (parent query) =>",
-              num
-            );
-            return num;
-          }
-        }
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+
+      if (!el) continue;
+
+      const amount = extractNumber(el.innerText);
+
+      if (parseInt(amount, 10) > 0) {
+        console.log(LOG_PREFIX + "Amount detected:", amount);
+        return amount;
       }
     }
 
-    console.warn(LOG_PREFIX + "TOTAL amount not found (strict) => 0");
+    console.warn(LOG_PREFIX + "Amount not found");
     return "0";
   }
 
-  function createLoadingOverlay() {
-    if (document.getElementById("fnt-loading-overlay")) return;
-    const overlay = document.createElement("div");
-    overlay.id = "fnt-loading-overlay";
-    overlay.style.cssText =
-      "position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(255,255,255,1); z-index:9998; display:flex; flex-direction:column; align-items:center; justify-content:center; font-family:sans-serif; transition: opacity 0.5s;";
-    const style = document.createElement("style");
-    style.innerHTML = `
-      @keyframes fnt-spin { to { transform: rotate(360deg); } }
-      .fnt-spinner { width: 45px; height: 45px; border: 4px solid #f3f3f3; border-top-color: #000; border-radius: 50%; animation: fnt-spin 1s linear infinite; margin-bottom: 20px; }
-    `;
-    document.head.appendChild(style);
-    overlay.innerHTML = `
-      <div class="fnt-spinner"></div>
-      <div style="font-weight: 600; font-size: 16px; color: #333;">결제 시스템을 불러오고 있습니다...</div>
-    `;
-    document.body.appendChild(overlay);
+  // ---------------- 상품명 ----------------
+
+  function getItemName() {
+    const selectors = [
+      ".sod_name",
+      ".goods_name",
+      ".item_name",
+      ".od_prd_name",
+    ];
+
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+
+      if (!el) continue;
+
+      const txt = (el.innerText || "").trim();
+
+      if (txt) {
+        return limitItemName(txt);
+      }
+    }
+
+    return "상품";
   }
+
+  // ---------------- 저장 ----------------
+
+  function savePaymentData(method) {
+    const orderNo =
+      document.querySelector('input[name="od_id"]')?.value ||
+      "ORD-" + Date.now();
+
+    const userName =
+      document.querySelector('input[name="od_name"]')?.value || "";
+
+    const userTel =
+      document.querySelector('input[name="od_hp"]')?.value || "";
+
+    const userEmail =
+      document.querySelector('input[name="od_email"]')?.value || "";
+
+    const amount = getTotalAmount();
+
+    const itemName = getItemName();
+
+    const data = {
+      orderNo,
+      userName,
+      userTel,
+      userEmail,
+      amount,
+      itemName,
+      method,
+    };
+
+    localStorage.setItem("fintree_pay_data", JSON.stringify(data));
+
+    console.log(LOG_PREFIX + "Saved:", data);
+
+    return data;
+  }
+
+  // ---------------- SDK ----------------
 
   function executePay(params) {
-    console.log(LOG_PREFIX + "Calling MARU.pay", params);
+    console.log(LOG_PREFIX + "executePay", params);
 
-    setTimeout(function () {
-      if (typeof MARU === "undefined") {
-        console.error(LOG_PREFIX + "MARU SDK Not Found.");
-        alert("결제 모듈을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
-        location.reload();
-        return;
-      }
+    if (typeof MARU === "undefined") {
+      alert("결제모듈 로딩 실패");
+      return;
+    }
 
-      // ✅ ITEM_NAME: 20자 + 55byte 제한 적용
-      const safeItemName = limitItemName(params.itemName || "상품") || "상품";
+    MARU.pay({
+      payRoute: "3d",
+      responseFunction: paymentResultByJS,
 
-      MARU.pay({
-        payRoute: "3d",
-        responseFunction: window.paymentResultByJS,
-        publicKey: CONFIG.PUBLIC_KEY,
-        trackId: params.trackId,
-        amount: params.amount,
-        redirectUrl: window.location.origin + getRedirectUrl(CONFIG.PATHS.SUCCESS),
-        itemName: safeItemName,
-        userEmail: params.userEmail,
-        userName: params.userName,
-        userTel: params.userTel,
-        mode: "layer",
-        debugMode: "live",
-      });
-    }, 250);
+      publicKey: CONFIG.PUBLIC_KEY,
+
+      trackId: params.orderNo,
+      amount: params.amount,
+
+      itemName: params.itemName,
+
+      userName: params.userName,
+      userTel: params.userTel,
+      userEmail: params.userEmail,
+
+      redirectUrl:
+        location.origin + CONFIG.PATHS.SUCCESS,
+
+      mode: "layer",
+      debugMode: "live",
+    });
   }
 
+  // ---------------- CALLBACK ----------------
+
   window.paymentResultByJS = function (data) {
-    console.log(LOG_PREFIX + "SDK Callback Data Received:", data);
-    if (!data || !data.result) return;
+    console.log(LOG_PREFIX + "callback:", data);
+
+    if (!data || !data.result) {
+      return;
+    }
 
     const resultCd = data.result.resultCd;
-    const resultMsg = data.result.resultMsg || "";
-    const advanceMsg = data.result.advanceMsg || resultMsg;
 
     if (resultCd === "0000") {
-      const trackId =
-        data.pay && data.pay.trackId ? data.pay.trackId : getURLParam("order_no");
-      console.log(LOG_PREFIX + "Payment Success. Redirecting...");
       location.href =
-        getRedirectUrl(CONFIG.PATHS.SUCCESS) +
-        "?status=success&trackId=" +
-        trackId;
+        CONFIG.PATHS.SUCCESS +
+        "?trackId=" +
+        encodeURIComponent(data.pay.trackId);
     } else {
-      console.warn(LOG_PREFIX + "Payment Failed/Cancelled:", resultCd, advanceMsg);
       location.href =
-        getRedirectUrl(CONFIG.PATHS.CANCEL) +
+        CONFIG.PATHS.CANCEL +
         "?msg=" +
-        encodeURIComponent(advanceMsg);
+        encodeURIComponent(data.result.resultMsg || "결제실패");
     }
   };
 
-  // ---------------- /shop_payment ----------------
+  // ---------------- UI ----------------
 
-  function handleShopPayment() {
-    console.log(LOG_PREFIX + "Routing: /shop_payment");
+  function injectPaymentButtons() {
+    const target =
+      document.querySelector("#sod_frm_paysel") ||
+      document.querySelector(".order_pay_area");
 
-    function injectCustomPaymentUI() {
-      const timer = setInterval(() => {
-        const headers = Array.from(
-          document.querySelectorAll("header, h2, h3, .title, .css-17g8nhj")
-        );
-        const paymentHeader = headers.find((h) =>
-          (h.innerText || "").includes("결제수단")
-        );
-        if (!paymentHeader) return;
-
-        const paymentSection =
-          paymentHeader.closest('div[class*="css-"]') ||
-          paymentHeader.closest(".pay-method-section") ||
-          paymentHeader.parentElement;
-        if (!paymentSection) return;
-
-        if (paymentSection.querySelector(".pay-method-custom")) {
-          clearInterval(timer);
-          return;
-        }
-
-        // Find bank radio (OPM01)
-        const radios = Array.from(document.querySelectorAll('input[type="radio"]'));
-        const bankRadio = radios.find(
-          (r) => r.value && String(r.value).includes("OPM01")
-        );
-        if (!bankRadio) return;
-
-        // ✅ 아임웹 흐름을 유지하려고 기본은 무통장 라디오를 선택해둠
-        if (!bankRadio.checked) bankRadio.click();
-
-        // Find depositor/account block
-        let depositorBlock = document.querySelector(".css-1hw29i9");
-        if (!depositorBlock) {
-          const input =
-            document.querySelector('input[placeholder*="입금자명"]') ||
-            document.querySelector('input[name="depositor"]');
-          if (input) {
-            depositorBlock = input.closest("div");
-            if (depositorBlock && depositorBlock.tagName === "LABEL")
-              depositorBlock = depositorBlock.parentElement;
-          }
-        }
-
-        // 기본 bank fieldset
-        const fieldset = bankRadio.closest("fieldset");
-
-        const customUI = document.createElement("div");
-        customUI.className = "pay-method-custom";
-        customUI.innerHTML = `
-          <style>
-            .pay-method-custom { display:flex; flex-direction:column; gap:12px; margin: 12px 0; }
-            .pay-method-buttons { display:flex; gap:10px; }
-            .pay-method-custom button{
-              flex:1; padding:15px; border:1px solid #ddd; border-radius:8px;
-              background:#fff; font-weight:700; cursor:pointer; font-size:16px;
-            }
-            .pay-method-custom button.active{ border-color:#333; background:#333; color:#fff; }
-            .pay-guide-text{ font-size:13px; color:#666; line-height:1.5; }
-            .pay-guide-text .pay-guide-red{ color:#e60000; font-weight:700; }
-            .pay-guide-text .pay-guide-blue{ color:#0066ff; font-weight:700; }
-            .moved-depositor-block{ margin-top:10px; padding:10px; border:1px solid #eee; border-radius:6px; background:#fafafa; }
-          </style>
-          <div class="pay-guide-text">
-            * 아래 버튼을 눌러 결제수단을 선택해주세요.<br>
-            <span class="pay-guide-red">* 카드결제시에도 계좌안내문자가 자동 발송됩니다.</span><br>
-            카드결제와는 무관한 자동문자입니다.<br>
-            * 카드결제 오류 시 카카오톡으로 문의해주세요.<br>
-            <span class="pay-guide-blue">* 법인카드 결제시 카카오톡으로 문의주세요.</span><br> 
-            * 결제오류로 재결제가 필요하실 경우<br>
-            다시 주문하지 마시고 카카오톡으로 문의주세요.
-          </div>
-          <div class="pay-method-buttons">
-            <button type="button" data-method="CREDIT" class="active">💳 카드결제</button>
-            <button type="button" data-method="BANK">🏦 무통장입금</button>
-          </div>
-          <div id="fnt-depositor-area"></div>
-        `;
-
-        paymentHeader.insertAdjacentElement("afterend", customUI);
-
-        // Move depositor block into custom UI
-        if (depositorBlock) {
-          depositorBlock.classList.add("moved-depositor-block");
-          const area = customUI.querySelector("#fnt-depositor-area");
-          if (area) area.appendChild(depositorBlock);
-        }
-
-        // ✅ 기본 fieldset은 "이동 성공했을 때만" 숨김 (안 찾았는데 숨기면 사이트별로 계좌가 사라짐)
-        const area = customUI.querySelector("#fnt-depositor-area");
-        const moved = area && depositorBlock;
-        if (fieldset && moved) fieldset.style.display = "none";
-
-        // ✅ 카드결제일 때 “계좌/입금자 블록 숨김”, 무통장입금일 때 “보임”
-        function applyMethodUI(method) {
-          const stateMethod = method === "CREDIT" ? "CreditCard" : "BankTransfer";
-          localStorage.setItem("payMethod", stateMethod);
-
-          if (method === "CREDIT") {
-            if (depositorBlock) depositorBlock.style.display = "none";
-          } else {
-            if (depositorBlock) {
-              depositorBlock.style.display = "flex";
-              depositorBlock.style.flexDirection = "column";
-              depositorBlock.style.gap = "8px";
-            }
-          }
-        }
-
-        // Bind buttons
-        const buttons = customUI.querySelectorAll("button[data-method]");
-        function setActive(method) {
-          buttons.forEach((b) => b.classList.remove("active"));
-          const btn = customUI.querySelector(`button[data-method="${method}"]`);
-          if (btn) btn.classList.add("active");
-          applyMethodUI(method);
-          saveCurrentState("Method Switch", method);
-        }
-
-        buttons.forEach((btn) => {
-          btn.addEventListener("click", (e) => {
-            const method = e.currentTarget.getAttribute("data-method");
-            console.log(LOG_PREFIX + "Method clicked:", method);
-            setActive(method);
-          });
-        });
-
-        // Initial = BANK
-        localStorage.setItem("payMethod", "BankTransfer");
-        setActive("BANK");
-
-        console.log(LOG_PREFIX + "Custom Payment UI injected");
-        clearInterval(timer);
-      }, 400);
+    if (!target) {
+      console.warn(LOG_PREFIX + "payment area not found");
+      return;
     }
 
-    function saveCurrentState(source = "Manual", overrideMethod = null) {
-      // Orderer
-      const ordererName =
-        document.querySelector('input[name="ordererName"]')?.value || "";
-      const ordererTel =
-        document.querySelector('input[name="ordererCall"]')?.value || "";
-      const ordererEmail =
-        document.querySelector('input[name="ordererEmail"]')?.value || "";
-
-      // Item name (best effort)
-      const itemNameEl =
-        document.querySelector(".css-a0a2v3") ||
-        document.querySelector("._product_name") ||
-        document.querySelector('[class*="product"] [class*="name"]');
-
-      let itemName = itemNameEl ? (itemNameEl.innerText || "").trim() : "상품";
-
-      // ✅ ITEM_NAME: 20자 + 55byte 제한 적용
-      itemName = limitItemName(itemName) || "상품";
-
-      // Qty
-      const qtyEl =
-        document.querySelector(".css-15fzge") ||
-        document.querySelector("._product_qty");
-      const qty = qtyEl ? extractNumber(qtyEl.innerText) || "1" : "1";
-
-      // ✅ amount: ONLY strict total
-      const totalAmount = findTotalOrderAmountStrict();
-
-      // Method
-      let method = overrideMethod;
-      if (!method) {
-        const uiState = localStorage.getItem("payMethod");
-        if (uiState === "CreditCard") method = "CREDIT";
-        else if (uiState === "BankTransfer") method = "BANK";
-        else method = "BANK";
-      }
-
-      const urlOrderNo = getURLParam("order_no");
-      const paymentData = {
-        orderNo: urlOrderNo || "ORD-" + Date.now(),
-        amount: totalAmount,
-        userName: ordererName,
-        userTel: ordererTel,
-        userEmail: ordererEmail,
-        itemName: itemName,
-        qty: qty,
-        method: method,
-      };
-
-      localStorage.setItem("fintree_pay_data", JSON.stringify(paymentData));
-      console.log(
-        LOG_PREFIX + `Saved fintree_pay_data [${source}] =>`,
-        paymentData
-      );
-
-      if (!totalAmount || totalAmount === "0") {
-        console.warn(LOG_PREFIX + "Amount not found => 0 (blocked)");
-      }
-      return paymentData;
+    if (document.querySelector(".fintree-pay-ui")) {
+      return;
     }
 
-    window.addEventListener("load", function () {
-      ["ordererName", "ordererCall", "ordererEmail"].forEach((name) => {
-        const el = document.querySelector(`input[name="${name}"]`);
-        if (el) el.addEventListener("input", () => saveCurrentState("Input"));
+    const wrap = document.createElement("div");
+
+    wrap.className = "fintree-pay-ui";
+
+    wrap.innerHTML = `
+      <style>
+        .fintree-pay-ui{
+          margin:20px 0;
+        }
+
+        .fintree-pay-buttons{
+          display:flex;
+          gap:10px;
+        }
+
+        .fintree-pay-buttons button{
+          flex:1;
+          padding:15px;
+          border:1px solid #ddd;
+          background:#fff;
+          border-radius:8px;
+          font-size:16px;
+          font-weight:700;
+          cursor:pointer;
+        }
+
+        .fintree-pay-buttons button.active{
+          background:#111;
+          color:#fff;
+          border-color:#111;
+        }
+
+        .fintree-guide{
+          margin-bottom:15px;
+          line-height:1.6;
+          font-size:13px;
+          color:#666;
+        }
+      </style>
+
+      <div class="fintree-guide">
+        카드결제 오류 시 카카오톡으로 문의해주세요.<br>
+        법인카드 결제는 별도 문의 바랍니다.
+      </div>
+
+      <div class="fintree-pay-buttons">
+        <button type="button" data-method="CREDIT" class="active">
+          💳 카드결제
+        </button>
+
+        <button type="button" data-method="BANK">
+          🏦 무통장입금
+        </button>
+      </div>
+    `;
+
+    target.prepend(wrap);
+
+    let currentMethod = "CREDIT";
+
+    const buttons = wrap.querySelectorAll("button");
+
+    buttons.forEach((btn) => {
+      btn.addEventListener("click", function () {
+        buttons.forEach((b) => b.classList.remove("active"));
+
+        this.classList.add("active");
+
+        currentMethod = this.dataset.method;
+
+        console.log(LOG_PREFIX + "Method:", currentMethod);
       });
-
-      // Keep amount fresh (DOM changes)
-      setInterval(() => {
-        if (pathMatches(CONFIG.PATHS.INFO)) saveCurrentState("Timer");
-      }, 1000);
-
-      // On "결제하기" click: save then allow Imweb submit
-      document.addEventListener(
-        "click",
-        function (e) {
-          const btn = e.target.closest(
-            'button[type="submit"], ._btn_payment, .css-1tf84sl, .css-clap0e'
-          );
-          if (btn && (btn.innerText || "").includes("결제하기")) {
-            console.log(
-              LOG_PREFIX + "결제하기 clicked -> save state then allow submit"
-            );
-            saveCurrentState("Submit Click");
-            return true;
-          }
-        },
-        true
-      );
     });
 
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", injectCustomPaymentUI);
-    } else {
-      injectCustomPaymentUI();
+    // ---------------- 주문버튼 가로채기 ----------------
+
+    const submitBtn =
+      document.querySelector("#btn_submit") ||
+      document.querySelector(".btn_submit");
+
+    if (!submitBtn) {
+      console.warn(LOG_PREFIX + "submit button not found");
+      return;
     }
-  }
 
-  // ---------------- /shop_payment_complete ----------------
+    submitBtn.addEventListener(
+      "click",
+      function (e) {
+        if (currentMethod !== "CREDIT") {
+          savePaymentData("BANK");
+          return true;
+        }
 
-  function handleShopPaymentComplete() {
-    console.log(LOG_PREFIX + "Routing: /shop_payment_complete");
+        e.preventDefault();
+        e.stopPropagation();
 
-    window.addEventListener("load", function () {
-      const urlOrderNo = getURLParam("order_no");
+        const params = savePaymentData("CREDIT");
 
-      let stored = null;
-      try {
-        stored = JSON.parse(localStorage.getItem("fintree_pay_data"));
-      } catch (e) {}
+        if (!params.amount || params.amount === "0") {
+          alert("결제금액을 읽지 못했습니다.");
+          return false;
+        }
 
-      const params = {
-        trackId:
-          urlOrderNo ||
-          (stored && stored.orderNo) ||
-          "ORD-" + Date.now(),
-        // ✅ complete 페이지에서는 DOM에서 재탐색하지 말고 저장값 사용
-        amount: stored && stored.amount ? String(stored.amount) : "0",
-        userName: (stored && stored.userName) || "",
-        userTel: (stored && stored.userTel) || "",
-        userEmail: (stored && stored.userEmail) || "",
-        // ✅ ITEM_NAME: 20자 + 55byte 제한 적용
-        itemName: limitItemName((stored && stored.itemName) || "상품") || "상품",
-      };
-
-      console.log(LOG_PREFIX + "Final params:", params);
-
-      if (!params.amount || params.amount === "0") {
-        alert(
-          location.hostname +
-            " 내용:\n\n결제금액을 읽지 못해서 결제를 진행할 수 없습니다. (amount=0)\n" +
-            "현재 페이지가 아니라 /shop_payment에서 '총 주문금액'을 못 읽은 상태입니다.\n" +
-            "F12 콘솔에서 'Amount from TOTAL row' 로그 캡처를 보내주세요."
-        );
-        console.error(LOG_PREFIX + "Blocked: amount=0", params);
-        return;
-      }
-
-      if (stored && stored.method === "CREDIT") {
-        console.log(
-          LOG_PREFIX + "CREDIT intent detected -> open payment layer now"
-        );
-        createLoadingOverlay();
         executePay(params);
-      } else {
-        console.log(LOG_PREFIX + "BANK intent or unknown -> no auto payment");
-      }
-    });
+
+        return false;
+      },
+      true
+    );
+
+    console.log(LOG_PREFIX + "Custom UI injected");
   }
 
-  // ---------------- Router ----------------
+  // ---------------- INIT ----------------
 
-  function initRouter() {
-    if (pathMatches(CONFIG.PATHS.INFO)) handleShopPayment();
-    else if (pathMatches(CONFIG.PATHS.CONFIRM)) handleShopPaymentComplete();
+  function init() {
+    console.log(LOG_PREFIX + "init");
+
+    if (pathIncludes(CONFIG.PATHS.ORDER)) {
+      injectPaymentButtons();
+    }
   }
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", initRouter);
+    document.addEventListener("DOMContentLoaded", init);
   } else {
-    initRouter();
+    init();
   }
 })();
