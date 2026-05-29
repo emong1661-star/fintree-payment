@@ -67,8 +67,8 @@
   }
 
   const CONFIG = {
-    PUBLIC_KEY: "pk_1fc0-d72bd2-31f-a22a1",
-    TID: "TMN009875",
+    PUBLIC_KEY: "pk_acde-acde13-acd-acde1",
+    TID: "TMN025716",
     VERIFY_API: "/api/verify",
     HOSTED_DOMAIN: hostedDomain,
     PATHS: {
