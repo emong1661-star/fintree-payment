@@ -302,7 +302,7 @@
           document.querySelectorAll("header, h2, h3, .title, .css-17g8nhj")
         );
         const paymentHeader = headers.find((h) =>
-          (h.innerText || "").includes("결제수단")
+          (h.innerText || "").includes("결제 수단")
         );
         if (!paymentHeader) return;
 
