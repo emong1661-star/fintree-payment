@@ -4,10 +4,6 @@
  *  - amount: ONLY from "총 주문금액" row (span next to label)
  *  - hide bank account/depositor blocks when CREDIT selected
  *  - itemName 제한: 20자 + UTF-8 55byte (avoid ITEM_NAME length error)
- *  - ✅ 영수증 구매자명(PURCHASER) 매핑: SDK 표준 키 payerName/payerTel 추가 전달
- *      · 기존 userName/userTel은 그대로 유지 (호환성)
- *      · payRoute "3d" 유지 (기존 결제창 UX 변동 없음)
- *      · 검증/차단 로직 없음 (아임웹+SDK 자체 검증에 위임)
  */
 
 (function () {
@@ -28,7 +24,6 @@
     "ahsxpffjrtm.imweb.me",
     "xn--wl2b73c5ykxyp.shop",
     "xn--2j1b308a8jaw4x.shop",
-    "xn--oi2b94xh5a.shop",
     "royalwatchhouse.imweb.me",
     "lowkeyedit.shop",
     "localhost",
@@ -119,10 +114,13 @@
   }
 
   // ---------------- ITEM_NAME limit (20 chars + 55 bytes) ----------------
+  // ✅ PG 에러 기준이 55byte이므로, 20자 제한만으로는 한글/이모지에서 실패할 수 있어 이중 제한.
   const ITEM_NAME_MAX_CHARS = 20;
   const ITEM_NAME_MAX_BYTES = 55;
 
+  // UTF-8 byte truncate
   function utf8ByteLength(str) {
+    // TextEncoder 미지원 환경 대비
     try {
       return new TextEncoder().encode(str).length;
     } catch (e) {
@@ -152,19 +150,23 @@
 
   function limitItemName(str) {
     const s = normalizeItemName(str);
-    const byChars = s.slice(0, ITEM_NAME_MAX_CHARS);
-    return utf8Truncate(byChars, ITEM_NAME_MAX_BYTES);
+    const byChars = s.slice(0, ITEM_NAME_MAX_CHARS); // 1) 20자 제한
+    return utf8Truncate(byChars, ITEM_NAME_MAX_BYTES); // 2) 55byte 제한
   }
 
   /**
-   * ✅ "총 주문금액" 옆 span 값만 읽는다.
+   * ✅ 핵심: "총 주문금액" 옆 span 값만 읽는다.
+   * - 네가 준 DOM 구조에 1:1 대응
+   * - 배송비/상품가/할인가 절대 안 건드림
    */
   function findTotalOrderAmountStrict() {
+    // 1) "총 주문금액" 라벨 span을 찾는다
     const labelSpans = Array.from(document.querySelectorAll("span")).filter(
       (s) => (s.innerText || "").trim() === "총 주문금액"
     );
 
     for (const label of labelSpans) {
+      // 2) 바로 다음 형제 span을 1순위로 읽는다 (네 캡처 구조)
       const next = label.nextElementSibling;
       if (next && next.tagName === "SPAN") {
         const num = extractNumber(next.innerText);
@@ -177,6 +179,7 @@
         }
       }
 
+      // 3) 같은 부모 안에서 css-nxbuqh 같은 '금액용 span'을 찾는다
       const parent = label.parentElement;
       if (parent) {
         const amountSpan =
@@ -234,32 +237,17 @@
       // ✅ ITEM_NAME: 20자 + 55byte 제한 적용
       const safeItemName = limitItemName(params.itemName || "상품") || "상품";
 
-      // ✅ 주문자 정보: trim만 (검증/fallback 없음, 비어있으면 SDK 검증에 위임)
-      const safeUserName = String(params.userName || "").trim();
-      const safeUserTel = String(params.userTel || "").trim();
-      const safeUserEmail = String(params.userEmail || "").trim();
-
-      console.log(LOG_PREFIX + "Final payerName for receipt:", safeUserName);
-
       MARU.pay({
         payRoute: "3d",
         responseFunction: window.paymentResultByJS,
         publicKey: CONFIG.PUBLIC_KEY,
         trackId: params.trackId,
         amount: params.amount,
-        redirectUrl:
-          window.location.origin + getRedirectUrl(CONFIG.PATHS.SUCCESS),
+        redirectUrl: window.location.origin + getRedirectUrl(CONFIG.PATHS.SUCCESS),
         itemName: safeItemName,
-
-        // ✅ 기존 키 그대로 유지 (호환성)
-        userEmail: safeUserEmail,
-        userName: safeUserName,
-        userTel: safeUserTel,
-
-        // ✅ SDK clientsideV2.js 표준 키 추가 (영수증 PURCHASER 매핑)
-        payerName: safeUserName,
-        payerTel: safeUserTel,
-
+        userEmail: params.userEmail,
+        userName: params.userName,
+        userTel: params.userTel,
         mode: "layer",
         debugMode: "live",
       });
@@ -276,20 +264,14 @@
 
     if (resultCd === "0000") {
       const trackId =
-        data.pay && data.pay.trackId
-          ? data.pay.trackId
-          : getURLParam("order_no");
+        data.pay && data.pay.trackId ? data.pay.trackId : getURLParam("order_no");
       console.log(LOG_PREFIX + "Payment Success. Redirecting...");
       location.href =
         getRedirectUrl(CONFIG.PATHS.SUCCESS) +
         "?status=success&trackId=" +
         trackId;
     } else {
-      console.warn(
-        LOG_PREFIX + "Payment Failed/Cancelled:",
-        resultCd,
-        advanceMsg
-      );
+      console.warn(LOG_PREFIX + "Payment Failed/Cancelled:", resultCd, advanceMsg);
       location.href =
         getRedirectUrl(CONFIG.PATHS.CANCEL) +
         "?msg=" +
@@ -323,16 +305,17 @@
           return;
         }
 
-        const radios = Array.from(
-          document.querySelectorAll('input[type="radio"]')
-        );
+        // Find bank radio (OPM01)
+        const radios = Array.from(document.querySelectorAll('input[type="radio"]'));
         const bankRadio = radios.find(
           (r) => r.value && String(r.value).includes("OPM01")
         );
         if (!bankRadio) return;
 
+        // ✅ 아임웹 흐름을 유지하려고 기본은 무통장 라디오를 선택해둠
         if (!bankRadio.checked) bankRadio.click();
 
+        // Find depositor/account block
         let depositorBlock = document.querySelector(".css-1hw29i9");
         if (!depositorBlock) {
           const input =
@@ -345,6 +328,7 @@
           }
         }
 
+        // 기본 bank fieldset
         const fieldset = bankRadio.closest("fieldset");
 
         const customUI = document.createElement("div");
@@ -381,19 +365,21 @@
 
         paymentHeader.insertAdjacentElement("afterend", customUI);
 
+        // Move depositor block into custom UI
         if (depositorBlock) {
           depositorBlock.classList.add("moved-depositor-block");
           const area = customUI.querySelector("#fnt-depositor-area");
           if (area) area.appendChild(depositorBlock);
         }
 
+        // ✅ 기본 fieldset은 "이동 성공했을 때만" 숨김 (안 찾았는데 숨기면 사이트별로 계좌가 사라짐)
         const area = customUI.querySelector("#fnt-depositor-area");
         const moved = area && depositorBlock;
         if (fieldset && moved) fieldset.style.display = "none";
 
+        // ✅ 카드결제일 때 “계좌/입금자 블록 숨김”, 무통장입금일 때 “보임”
         function applyMethodUI(method) {
-          const stateMethod =
-            method === "CREDIT" ? "CreditCard" : "BankTransfer";
+          const stateMethod = method === "CREDIT" ? "CreditCard" : "BankTransfer";
           localStorage.setItem("payMethod", stateMethod);
 
           if (method === "CREDIT") {
@@ -407,6 +393,7 @@
           }
         }
 
+        // Bind buttons
         const buttons = customUI.querySelectorAll("button[data-method]");
         function setActive(method) {
           buttons.forEach((b) => b.classList.remove("active"));
@@ -424,6 +411,7 @@
           });
         });
 
+        // Initial = BANK
         localStorage.setItem("payMethod", "BankTransfer");
         setActive("BANK");
 
@@ -433,7 +421,7 @@
     }
 
     function saveCurrentState(source = "Manual", overrideMethod = null) {
-      // ✅ 아임웹 표준 ordererName 필드만 사용 (배송지 receiver/입금자 depositor 절대 안 잡음)
+      // Orderer
       const ordererName =
         document.querySelector('input[name="ordererName"]')?.value || "";
       const ordererTel =
@@ -448,6 +436,8 @@
         document.querySelector('[class*="product"] [class*="name"]');
 
       let itemName = itemNameEl ? (itemNameEl.innerText || "").trim() : "상품";
+
+      // ✅ ITEM_NAME: 20자 + 55byte 제한 적용
       itemName = limitItemName(itemName) || "상품";
 
       // Qty
@@ -456,7 +446,7 @@
         document.querySelector("._product_qty");
       const qty = qtyEl ? extractNumber(qtyEl.innerText) || "1" : "1";
 
-      // Total amount
+      // ✅ amount: ONLY strict total
       const totalAmount = findTotalOrderAmountStrict();
 
       // Method
@@ -504,7 +494,6 @@
       }, 1000);
 
       // On "결제하기" click: save then allow Imweb submit
-      // ✅ preventDefault/stopPropagation 사용 안 함 — 아임웹 자체 검증 흐름 보존
       document.addEventListener(
         "click",
         function (e) {
@@ -548,12 +537,13 @@
           urlOrderNo ||
           (stored && stored.orderNo) ||
           "ORD-" + Date.now(),
+        // ✅ complete 페이지에서는 DOM에서 재탐색하지 말고 저장값 사용
         amount: stored && stored.amount ? String(stored.amount) : "0",
         userName: (stored && stored.userName) || "",
         userTel: (stored && stored.userTel) || "",
         userEmail: (stored && stored.userEmail) || "",
-        itemName:
-          limitItemName((stored && stored.itemName) || "상품") || "상품",
+        // ✅ ITEM_NAME: 20자 + 55byte 제한 적용
+        itemName: limitItemName((stored && stored.itemName) || "상품") || "상품",
       };
 
       console.log(LOG_PREFIX + "Final params:", params);
@@ -567,11 +557,6 @@
         );
         console.error(LOG_PREFIX + "Blocked: amount=0", params);
         return;
-      }
-
-      // ✅ userName 검증/차단 없음 — 비어있어도 SDK가 알아서 처리
-      if (!params.userName) {
-        console.warn(LOG_PREFIX + "userName empty — proceeding to SDK");
       }
 
       if (stored && stored.method === "CREDIT") {
