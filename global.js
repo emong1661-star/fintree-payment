@@ -4,8 +4,6 @@
  *  - amount: ONLY from "총 주문금액" row (span next to label)
  *  - hide bank account/depositor blocks when CREDIT selected
  *  - itemName 제한: 20자 + UTF-8 55byte (avoid ITEM_NAME length error)
- *  - ✅ payerName/payerTel 매핑 추가 (영수증 PURCHASER 표기용)
- *  - ✅ xn--oi2b94xh5a.shop (AURA) 도메인 추가
  */
 
 (function () {
@@ -26,7 +24,6 @@
     "ahsxpffjrtm.imweb.me",
     "xn--wl2b73c5ykxyp.shop",
     "xn--2j1b308a8jaw4x.shop",
-    "xn--oi2b94xh5a.shop",
     "royalwatchhouse.imweb.me",
     "lowkeyedit.shop",
     "localhost",
@@ -159,13 +156,17 @@
 
   /**
    * ✅ 핵심: "총 주문금액" 옆 span 값만 읽는다.
+   * - 네가 준 DOM 구조에 1:1 대응
+   * - 배송비/상품가/할인가 절대 안 건드림
    */
   function findTotalOrderAmountStrict() {
+    // 1) "총 주문금액" 라벨 span을 찾는다
     const labelSpans = Array.from(document.querySelectorAll("span")).filter(
       (s) => (s.innerText || "").trim() === "총 주문금액"
     );
 
     for (const label of labelSpans) {
+      // 2) 바로 다음 형제 span을 1순위로 읽는다 (네 캡처 구조)
       const next = label.nextElementSibling;
       if (next && next.tagName === "SPAN") {
         const num = extractNumber(next.innerText);
@@ -178,6 +179,7 @@
         }
       }
 
+      // 3) 같은 부모 안에서 css-nxbuqh 같은 '금액용 span'을 찾는다
       const parent = label.parentElement;
       if (parent) {
         const amountSpan =
@@ -235,13 +237,6 @@
       // ✅ ITEM_NAME: 20자 + 55byte 제한 적용
       const safeItemName = limitItemName(params.itemName || "상품") || "상품";
 
-      // ✅ 주문자 정보 안전 처리
-      const safeUserName = String(params.userName || "").trim();
-      const safeUserTel = String(params.userTel || "").trim();
-      const safeUserEmail = String(params.userEmail || "").trim();
-
-      console.log(LOG_PREFIX + "Final payerName for receipt:", safeUserName);
-
       MARU.pay({
         payRoute: "3d",
         responseFunction: window.paymentResultByJS,
@@ -250,16 +245,9 @@
         amount: params.amount,
         redirectUrl: window.location.origin + getRedirectUrl(CONFIG.PATHS.SUCCESS),
         itemName: safeItemName,
-
-        // 기존 키 (호환성 유지)
-        userEmail: safeUserEmail,
-        userName: safeUserName,
-        userTel: safeUserTel,
-
-        // ✅ SDK clientsideV2.js 표준 키 추가 (영수증 PURCHASER 매핑)
-        payerName: safeUserName,
-        payerTel: safeUserTel,
-
+        userEmail: params.userEmail,
+        userName: params.userName,
+        userTel: params.userTel,
         mode: "layer",
         debugMode: "live",
       });
@@ -384,12 +372,12 @@
           if (area) area.appendChild(depositorBlock);
         }
 
-        // ✅ 기본 fieldset은 "이동 성공했을 때만" 숨김
+        // ✅ 기본 fieldset은 "이동 성공했을 때만" 숨김 (안 찾았는데 숨기면 사이트별로 계좌가 사라짐)
         const area = customUI.querySelector("#fnt-depositor-area");
         const moved = area && depositorBlock;
         if (fieldset && moved) fieldset.style.display = "none";
 
-        // ✅ 카드결제일 때 "계좌/입금자 블록 숨김", 무통장입금일 때 "보임"
+        // ✅ 카드결제일 때 “계좌/입금자 블록 숨김”, 무통장입금일 때 “보임”
         function applyMethodUI(method) {
           const stateMethod = method === "CREDIT" ? "CreditCard" : "BankTransfer";
           localStorage.setItem("payMethod", stateMethod);
