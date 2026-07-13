@@ -34,6 +34,12 @@
     "emahdzmf.imweb.me",
     "demonk.shop",
 
+    "cjdekadhtwkd.imweb.me",
+    "cheongdamcloset.com",
+
+    "kimcheongdam1.imweb.me",
+    "kimcheongdam.co.kr",
+
     "localhost",
     "127.0.0.1",
     "bagdown-payment.netlify.app",
