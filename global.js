@@ -30,6 +30,10 @@
     "xn--oi2b94xh5a.shop",
     "royalwatchhouse.imweb.me",
     "lowkeyedit.shop",
+    
+    "emahdzmf.imweb.me",
+    "demonk.shop",
+
     "localhost",
     "127.0.0.1",
     "bagdown-payment.netlify.app",
