@@ -40,6 +40,9 @@
     "kimcheongdam1.imweb.me",
     "kimcheongdam.co.kr",
 
+    "fjrtufltiq1.imweb.me",
+    "luxuryshop.kr",
+
     "localhost",
     "127.0.0.1",
     "bagdown-payment.netlify.app",
