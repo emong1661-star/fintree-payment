@@ -43,6 +43,9 @@
     "fjrtufltiq1.imweb.me",
     "luxuryshop.kr",
 
+    "vmffjdm86.imweb.me",
+    "plus86.co.kr",
+
     "localhost",
     "127.0.0.1",
     "bagdown-payment.netlify.app",
