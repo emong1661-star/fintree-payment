@@ -49,6 +49,9 @@
     "ejdpeltus4.imweb.me",
     "xn--2-9z8ey8b4wynnf.shop",
     
+    "the-veloir.imweb.me",
+    "the-veloir.shop",
+    
     "localhost",
     "127.0.0.1",
     "bagdown-payment.netlify.app",
