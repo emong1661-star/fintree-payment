@@ -30,6 +30,9 @@
     "xn--oi2b94xh5a.shop",
     "royalwatchhouse.imweb.me",
     "lowkeyedit.shop",
+    "sixtshop.shop",
+    	
+
     
     "emahdzmf.imweb.me",
     "demonk.shop",
