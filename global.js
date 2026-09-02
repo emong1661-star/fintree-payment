@@ -49,9 +49,6 @@
 
     "vmffjdm86.imweb.me",
     "plus86.co.kr",
-
-    "ejdpeltus4.imweb.me",
-    "xn--2-9z8ey8b4wynnf.shop",
     
     "the-veloir.imweb.me",
     "the-veloir.shop",
