@@ -32,6 +32,8 @@
     "lowkeyedit.shop",
     "sixtshop.shop",
     "whtchdown.shop",
+    "nobleroom.imweb.me",
+    "nobleroom.shop",
     	
 
     
