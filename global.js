@@ -55,6 +55,11 @@
     
     "the-veloir.imweb.me",
     "the-veloir.shop",
+
+    "ohrishop-officialiy.imweb.me",
+    "ohrishop3.com",
+    "ohrishop2.com",
+    "ohrishop4.com",
     
     "localhost",
     "127.0.0.1",
