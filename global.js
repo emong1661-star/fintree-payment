@@ -645,10 +645,29 @@
         }
       }
 
+      // 카드결제(CREDIT)일 때만 총 주문금액에 6.5%를 적용
+      // 무통장입금(BANK)은 기존 총 주문금액 그대로 유지
+      const originalAmount = parseInt(totalAmount, 10) || 0;
+      let finalPaymentAmount = originalAmount;
+
+      if (method === "CREDIT") {
+        finalPaymentAmount = Math.round(originalAmount * 1.065);
+        console.log(
+          LOG_PREFIX + "CREDIT 6.5% applied:",
+          "original =", originalAmount,
+          "final =", finalPaymentAmount
+        );
+      } else {
+        console.log(
+          LOG_PREFIX + "BANK original amount:",
+          originalAmount
+        );
+      }
+
       const urlOrderNo = getURLParam("order_no");
       const paymentData = {
         orderNo: urlOrderNo || "ORD-" + Date.now(),
-        amount: totalAmount,
+        amount: String(finalPaymentAmount),
         userName: ordererName,       // 주문자명 (기존)
         userTel: ordererTel,
         userEmail: ordererEmail,
