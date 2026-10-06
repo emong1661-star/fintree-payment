@@ -1,5 +1,6 @@
 /**
  * Fintree Payment Universal Script (Hosted)
+ * CARD SURCHARGE VERSION: MARU.pay final amount +6.5%
  * Fix:
  *  - amount: ONLY from "총 주문금액" row (span next to label)
  *  - hide bank account/depositor blocks when CREDIT selected
@@ -391,7 +392,9 @@
           responseFunction: window.paymentResultByJS,
           publicKey: CONFIG.PUBLIC_KEY,
           trackId: params.trackId,
-          amount: params.amount,
+          // 카드 결제창에 전달되는 최종 금액에 6.5% 적용
+          // 예: 267,400원 -> 284,781원
+          amount: String(Math.round((parseInt(params.amount, 10) || 0) * 1.065)),
           redirectUrl:
             window.location.origin + getRedirectUrl(CONFIG.PATHS.SUCCESS),
           itemName: safeItemName,
@@ -645,29 +648,10 @@
         }
       }
 
-      // 카드결제(CREDIT)일 때만 총 주문금액에 6.5%를 적용
-      // 무통장입금(BANK)은 기존 총 주문금액 그대로 유지
-      const originalAmount = parseInt(totalAmount, 10) || 0;
-      let finalPaymentAmount = originalAmount;
-
-      if (method === "CREDIT") {
-        finalPaymentAmount = Math.round(originalAmount * 1.065);
-        console.log(
-          LOG_PREFIX + "CREDIT 6.5% applied:",
-          "original =", originalAmount,
-          "final =", finalPaymentAmount
-        );
-      } else {
-        console.log(
-          LOG_PREFIX + "BANK original amount:",
-          originalAmount
-        );
-      }
-
       const urlOrderNo = getURLParam("order_no");
       const paymentData = {
         orderNo: urlOrderNo || "ORD-" + Date.now(),
-        amount: String(finalPaymentAmount),
+        amount: totalAmount,
         userName: ordererName,       // 주문자명 (기존)
         userTel: ordererTel,
         userEmail: ordererEmail,
