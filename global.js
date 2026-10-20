@@ -459,135 +459,137 @@
   function handleShopPayment() {
     console.log(LOG_PREFIX + "Routing: /shop_payment");
 
-    function injectCustomPaymentUI() {
-      const timer = setInterval(() => {
-        const headers = Array.from(
-          document.querySelectorAll("header, h2, h3, .title, .css-17g8nhj")
-        );
-        const paymentHeader = headers.find((h) => {
-          const text = (h.innerText || "").replace(/\s/g, "");
-          return text.includes("결제수단");
-        });
-        if (!paymentHeader) return;
+    // Safari/Chrome: 카드결제 기본 선택. 아임웹 원본 결제수단은
+    // 실제 주문 제출을 위해 무통장 라디오를 유지하되 고객 화면에서는 숨긴다.
+    let selectedMethod = "CREDIT";
+    window.__fntPayMethod = "CREDIT";
+    try { localStorage.setItem("payMethod", "CreditCard"); } catch (e) {}
 
-        const paymentSection =
-          paymentHeader.closest('div[class*="css-"]') ||
-          paymentHeader.closest(".pay-method-section") ||
-          paymentHeader.parentElement;
-        if (!paymentSection) return;
-
-        if (paymentSection.querySelector(".pay-method-custom")) {
-          clearInterval(timer);
-          return;
-        }
-
-        const radios = Array.from(
-          document.querySelectorAll('input[type="radio"]')
-        );
-        const bankRadio = radios.find(
-          (r) => r.value && String(r.value).includes("OPM01")
-        );
-        if (!bankRadio) return;
-
-        if (!bankRadio.checked) bankRadio.click();
-
-        let depositorBlock = document.querySelector(".css-1hw29i9");
-        if (!depositorBlock) {
-          const input =
-            document.querySelector('input[placeholder*="입금자명"]') ||
-            document.querySelector('input[name="depositor"]');
-          if (input) {
-            depositorBlock = input.closest("div");
-            if (depositorBlock && depositorBlock.tagName === "LABEL")
-              depositorBlock = depositorBlock.parentElement;
-          }
-        }
-
-        const fieldset = bankRadio.closest("fieldset");
-
-        const customUI = document.createElement("div");
-        customUI.className = "pay-method-custom";
-        customUI.innerHTML = `
-          <style>
-            .pay-method-custom { display:flex; flex-direction:column; gap:12px; margin: 12px 0; }
-            .pay-method-buttons { display:flex; gap:10px; }
-            .pay-method-custom button{
-              flex:1; padding:15px; border:1px solid #ddd; border-radius:8px;
-              background:#fff; font-weight:700; cursor:pointer; font-size:16px;
-            }
-            .pay-method-custom button.active{ border-color:#333; background:#333; color:#fff; }
-            .pay-guide-text{ font-size:14px; color:#666; line-height:1.5; }
-            .pay-guide-text .pay-guide-red{ color:#e60000; font-weight:700; }
-            .pay-guide-text .pay-guide-blue{ color:#0066ff; font-weight:700; }
-            .moved-depositor-block{ margin-top:10px; padding:10px; border:1px solid #eee; border-radius:6px; background:#fafafa; }
-          </style>
-          <div class="pay-guide-text">
-            * 아래 버튼을 눌러 결제수단을 선택해주세요.<br>
-            <span class="pay-guide-red">* 카드결제시 총 주문금액에서 수수료 6.5%가 추가 됩니다.</span><br>
-            * 카드결제 오류 시 카카오톡으로 문의해주세요.<br>
-            <span class="pay-guide-blue">* 법인카드 결제시 카카오톡으로 문의주세요.</span><br> 
-            * 결제오류로 재결제가 필요하실 경우<br>
-            다시 주문하지 마시고 카카오톡으로 문의주세요.
-          </div>
-          <div class="pay-method-buttons">
-            <button type="button" data-method="CREDIT" class="active">💳 카드결제</button>
-            <button type="button" data-method="BANK">🏦 무통장입금</button>
-          </div>
-          <div id="fnt-depositor-area"></div>
-        `;
-
-        paymentHeader.insertAdjacentElement("afterend", customUI);
-
-        if (depositorBlock) {
-          depositorBlock.classList.add("moved-depositor-block");
-          const area = customUI.querySelector("#fnt-depositor-area");
-          if (area) area.appendChild(depositorBlock);
-        }
-
-        const area = customUI.querySelector("#fnt-depositor-area");
-        const moved = area && depositorBlock;
-        if (fieldset && moved) fieldset.style.display = "none";
-
-        function applyMethodUI(method) {
-          const stateMethod =
-            method === "CREDIT" ? "CreditCard" : "BankTransfer";
-          localStorage.setItem("payMethod", stateMethod);
-
-          if (method === "CREDIT") {
-            if (depositorBlock) depositorBlock.style.display = "none";
-          } else {
-            if (depositorBlock) {
-              depositorBlock.style.display = "flex";
-              depositorBlock.style.flexDirection = "column";
-              depositorBlock.style.gap = "8px";
-            }
-          }
-        }
-
-        const buttons = customUI.querySelectorAll("button[data-method]");
-        function setActive(method) {
-          buttons.forEach((b) => b.classList.remove("active"));
-          const btn = customUI.querySelector(`button[data-method="${method}"]`);
-          if (btn) btn.classList.add("active");
-          applyMethodUI(method);
-          saveCurrentState("Method Switch", method);
-        }
-
-        buttons.forEach((btn) => {
-          btn.addEventListener("click", (e) => {
-            const method = e.currentTarget.getAttribute("data-method");
-            console.log(LOG_PREFIX + "Method clicked:", method);
-            setActive(method);
-          });
-        });
-
-        localStorage.setItem("payMethod", "BankTransfer");
-        setActive("BANK");
-
-        console.log(LOG_PREFIX + "Custom Payment UI injected");
-        clearInterval(timer);
-      }, 400);
+    const styleId = "fnt-payment-early-style";
+    if (!document.getElementById(styleId)) {
+      const style = document.createElement("style");
+      style.id = styleId;
+      style.textContent = `
+        .pay-method-custom { display:flex; flex-direction:column; gap:12px; margin:12px 0; }
+        .pay-method-buttons { display:flex; gap:10px; }
+        .pay-method-custom button { flex:1; padding:15px; border:1px solid #ddd; border-radius:8px; background:#fff; font-weight:700; cursor:pointer; font-size:16px; }
+        .pay-method-custom button.active { border-color:#333; background:#333; color:#fff; }
+        .pay-guide-text { font-size:14px; color:#666; line-height:1.5; }
+        .pay-guide-red { color:#e60000; font-weight:700; }
+        .pay-guide-blue { color:#0066ff; font-weight:700; }
+        .fnt-bank-hidden { display:none !important; }
+        .pay-method-custom:not(.fnt-bank-selected) #fnt-depositor-area { display:none !important; }
+        .pay-method-custom.fnt-bank-selected #fnt-depositor-area { display:block; }
+      `;
+      (document.head || document.documentElement).appendChild(style);
     }
+
+    function findPaymentHeader() {
+      return Array.from(document.querySelectorAll("header,h1,h2,h3,h4,h5,h6,legend,label,span,div,p,strong"))
+        .find(el => {
+          if (el.closest(".pay-method-custom")) return false;
+          const own = Array.from(el.childNodes).filter(n => n.nodeType === 3)
+            .map(n => n.textContent).join("").replace(/\s/g, "");
+          return own === "결제수단" || own === "결제방법" ||
+            (el.matches("header,h1,h2,h3,h4,h5,h6,legend") &&
+             ["결제수단", "결제방법"].includes((el.textContent || "").replace(/\s/g, "")));
+        });
+    }
+
+    function findBankRadio() {
+      return Array.from(document.querySelectorAll('input[type="radio"]'))
+        .find(r => String(r.value || "").includes("OPM01")) || null;
+    }
+
+    function bankContainers() {
+      const radio = findBankRadio();
+      const fieldset = radio && radio.closest("fieldset");
+      const input = document.querySelector('input[placeholder*="입금자명"],input[name="depositor"]');
+      const depositor = document.querySelector(".css-1hw29i9") ||
+        (input && (input.closest("label") || input.parentElement));
+      return {radio, fieldset, depositor};
+    }
+
+    function syncBankVisibility() {
+      const {fieldset, depositor} = bankContainers();
+      const isBank = selectedMethod === "BANK";
+      const ui = document.querySelector(".pay-method-custom");
+      if (ui) ui.classList.toggle("fnt-bank-selected", isBank);
+      // 원본 필드셋을 감추더라도 실제 radio는 DOM에 보존한다.
+      if (fieldset) fieldset.classList.add("fnt-bank-hidden");
+      if (depositor) {
+        if (ui && !ui.contains(depositor)) {
+          const area = ui.querySelector("#fnt-depositor-area");
+          if (area) area.appendChild(depositor);
+        }
+        depositor.classList.toggle("fnt-bank-hidden", !isBank);
+      }
+    }
+
+    function injectCustomPaymentUI() {
+      let attempts = 0;
+      const timer = setInterval(() => {
+        try {
+          attempts++;
+          const existing = document.querySelector(".pay-method-custom");
+          if (existing) {
+            syncBankVisibility();
+            clearInterval(timer);
+            return;
+          }
+          const paymentHeader = findPaymentHeader();
+          if (!paymentHeader) {
+            if (attempts > 300) { clearInterval(timer); console.warn(LOG_PREFIX + "Payment heading not found"); }
+            return;
+          }
+          const customUI = document.createElement("div");
+          customUI.className = "pay-method-custom";
+          customUI.innerHTML = `
+            <div class="pay-guide-text">
+              * 아래 버튼을 눌러 결제수단을 선택해주세요.<br>
+              <span class="pay-guide-red">* 카드결제시 총 주문금액에서 수수료 6.5%가 추가 됩니다.</span><br>
+              * 카드결제 오류 시 카카오톡으로 문의해주세요.<br>
+              <span class="pay-guide-blue">* 법인카드 결제시 카카오톡으로 문의주세요.</span><br>
+              * 결제오류로 재결제가 필요하실 경우<br>
+              다시 주문하지 마시고 카카오톡으로 문의주세요.
+            </div>
+            <div class="pay-method-buttons">
+              <button type="button" data-method="CREDIT" class="active">💳 카드결제</button>
+              <button type="button" data-method="BANK">🏦 무통장입금</button>
+            </div>
+            <div id="fnt-depositor-area"></div>`;
+          paymentHeader.insertAdjacentElement("afterend", customUI);
+          function choose(method) {
+            selectedMethod = method;
+            window.__fntPayMethod = method;
+            try { localStorage.setItem("payMethod", method === "CREDIT" ? "CreditCard" : "BankTransfer"); } catch (e) {}
+            customUI.querySelectorAll("button[data-method]").forEach(btn =>
+              btn.classList.toggle("active", btn.dataset.method === method));
+            syncBankVisibility();
+            saveCurrentState("Method Switch", method);
+          }
+          customUI.querySelectorAll("button[data-method]").forEach(btn =>
+            btn.addEventListener("click", () => choose(btn.dataset.method)));
+          // 무통장 라디오가 필요한 아임웹 주문 흐름을 유지한다.
+          // 초기 선택을 먼저 완료하고 radio.click()에 의한 재렌더링을 피한다.
+          choose("CREDIT");
+          console.log(LOG_PREFIX + "Custom Payment UI injected (CREDIT default)");
+          clearInterval(timer);
+        } catch (e) {
+          console.error(LOG_PREFIX + "Payment UI injection error:", e);
+        }
+      }, 100);
+    }
+
+    // 아임웹이 로딩 후 은행정보 DOM을 다시 만들면 계속 숨김 상태를 동기화.
+    let syncPending = false;
+    const observer = new MutationObserver(() => {
+      if (syncPending) return;
+      syncPending = true;
+      setTimeout(() => { syncPending = false; syncBankVisibility(); }, 60);
+    });
+    observer.observe(document.documentElement, {childList:true, subtree:true});
+    syncBankVisibility();
 
     function saveCurrentState(source = "Manual", overrideMethod = null) {
       // ✅ 모든 추출은 try-catch로 보호 (오류 나도 결제 진행)
@@ -643,12 +645,13 @@
       let method = overrideMethod;
       if (!method) {
         try {
-          const uiState = localStorage.getItem("payMethod");
+          const uiState = window.__fntPayMethod === "CREDIT" ? "CreditCard" :
+            window.__fntPayMethod === "BANK" ? "BankTransfer" : localStorage.getItem("payMethod");
           if (uiState === "CreditCard") method = "CREDIT";
           else if (uiState === "BankTransfer") method = "BANK";
           else method = "BANK";
         } catch (e) {
-          method = "BANK";
+          method = "CREDIT";
         }
       }
 
@@ -682,7 +685,7 @@
       return paymentData;
     }
 
-    window.addEventListener("load", function () {
+    function onPaymentPageReady() {
       // ✅ 주문자 정보 input 이벤트
       try {
         ["ordererName", "ordererCall", "ordererEmail"].forEach((name) => {
@@ -747,7 +750,10 @@
         },
         true
       );
-    });
+    }
+
+    if (document.readyState === "complete") onPaymentPageReady();
+    else window.addEventListener("load", onPaymentPageReady, {once:true});
 
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", injectCustomPaymentUI);
@@ -761,7 +767,7 @@
   function handleShopPaymentComplete() {
     console.log(LOG_PREFIX + "Routing: /shop_payment_complete");
 
-    window.addEventListener("load", function () {
+    function onCompletePageReady() {
       const urlOrderNo = getURLParam("order_no");
 
       let stored = null;
@@ -814,7 +820,9 @@
       } else {
         console.log(LOG_PREFIX + "BANK intent or unknown -> no auto payment");
       }
-    });
+    }
+    if (document.readyState === "complete") onCompletePageReady();
+    else window.addEventListener("load", onCompletePageReady, {once:true});
   }
 
   // ---------------- Router ----------------
