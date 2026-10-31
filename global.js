@@ -226,7 +226,7 @@
 
       // 3순위: "배송 정보" 섹션 안에서 첫 번째 텍스트 input
       try {
-        const allHeaders = document.querySelectorAll("*");
+        const allHeaders = document.querySelectorAll("h1,h2,h3,h4,h5,h6,legend,label,strong,header,section > div,fieldset > div");
         for (const h of allHeaders) {
           const text = ((h.innerText || "") + "").replace(/\s/g, "");
           if (
@@ -586,7 +586,7 @@
     const observer = new MutationObserver(() => {
       if (syncPending) return;
       syncPending = true;
-      setTimeout(() => { syncPending = false; syncBankVisibility(); }, 60);
+      setTimeout(() => { syncPending = false; syncBankVisibility(); }, 120);
     });
     observer.observe(document.documentElement, {childList:true, subtree:true});
     syncBankVisibility();
@@ -686,47 +686,21 @@
     }
 
     function onPaymentPageReady() {
-      // ✅ 주문자 정보 input 이벤트
-      try {
-        ["ordererName", "ordererCall", "ordererEmail"].forEach((name) => {
-          const el = document.querySelector(`input[name="${name}"]`);
-          if (el) el.addEventListener("input", () => saveCurrentState("Input"));
-        });
-      } catch (e) {}
-
-      // ✅ 배송지 수령인 input 이벤트 (여러 이름 후보)
-      try {
-        [
-          "receiverName",
-          "deliveryReceiver",
-          "receiver",
-        ].forEach((name) => {
-          const el = document.querySelector(`input[name="${name}"]`);
-          if (el)
-            el.addEventListener("input", () =>
-              saveCurrentState("Receiver Input")
-            );
-        });
-
-        // placeholder 기반 수령인 input에도 리스너 추가
-        const receiverInputs = document.querySelectorAll(
-          'input[placeholder*="수령인"], input[placeholder*="받는분"]'
-        );
-        receiverInputs.forEach((el) => {
-          el.addEventListener("input", () =>
-            saveCurrentState("Receiver Input(placeholder)")
-          );
-        });
-      } catch (e) {}
-
-      // Keep amount fresh (DOM changes)
+      // 입력 변경 시 즉시(짧은 디바운스) 저장하고, 금액 변경은 낮은 빈도로 보완 확인.
+      let saveTimer = null;
+      const scheduleSave = () => {
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(() => saveCurrentState("Changed"), 180);
+      };
+      document.addEventListener("input", scheduleSave, {passive:true});
+      document.addEventListener("change", scheduleSave, {passive:true});
+      // 아임웹의 비동기 금액 변경 대비. 기존 1초 반복보다 호출 수 감소.
       setInterval(() => {
-        if (pathMatches(CONFIG.PATHS.INFO)) {
-          try {
-            saveCurrentState("Timer");
-          } catch (e) {}
+        if (pathMatches(CONFIG.PATHS.INFO) && !document.hidden) {
+          try { saveCurrentState("Amount Check"); } catch (e) {}
         }
-      }, 1000);
+      }, 3000);
+      saveCurrentState("Initial");
 
       // On "결제하기" click: save then allow Imweb submit
       document.addEventListener(
@@ -752,8 +726,9 @@
       );
     }
 
-    if (document.readyState === "complete") onPaymentPageReady();
-    else window.addEventListener("load", onPaymentPageReady, {once:true});
+    if (document.readyState === "loading")
+      document.addEventListener("DOMContentLoaded", onPaymentPageReady, {once:true});
+    else onPaymentPageReady();
 
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", injectCustomPaymentUI);
@@ -821,6 +796,7 @@
         console.log(LOG_PREFIX + "BANK intent or unknown -> no auto payment");
       }
     }
+    // 결제 SDK 로딩이 완료되어야 하므로 완료 페이지는 load 이벤트 유지.
     if (document.readyState === "complete") onCompletePageReady();
     else window.addEventListener("load", onCompletePageReady, {once:true});
   }
