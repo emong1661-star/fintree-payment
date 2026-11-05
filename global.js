@@ -551,7 +551,7 @@
               * 카드결제 오류 시 카카오톡으로 문의해주세요.<br>
               <span class="pay-guide-blue">* 법인카드 결제시 카카오톡으로 문의주세요.</span><br>
               * 결제오류로 재결제가 필요하실 경우<br>
-              기존주문은 취소로 새로 주문 해주세요.
+              기존주문은 취소 후 다시 주문 해주세요.
             </div>
             <div class="pay-method-buttons">
               <button type="button" data-method="CREDIT" class="active">💳 카드결제</button>
