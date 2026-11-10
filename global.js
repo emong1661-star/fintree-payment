@@ -35,7 +35,8 @@
     "whtchdown.shop",
     "nobleroom.imweb.me",
     "nobleroom.shop",
-    	
+    "gugupro.imweb.me",
+    "gugupro.shop",    	
 
     
     "emahdzmf.imweb.me",
